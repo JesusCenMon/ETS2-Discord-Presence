@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
-    <Content Include="../../data/cities_default.json" Link="cities_default.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../data/cities_default.json" Link="cities_default.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Content Include="../../assets/hero-truck.png" Link="hero-truck.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

@@ -7,7 +7,7 @@ using Microsoft.Win32;
 
 namespace Ets2DiscordPresence;
 
-internal sealed record AppSettings(string DiscordAppId, string GamePath)
+internal sealed record AppSettings(string GamePath)
 {
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -18,10 +18,10 @@ internal sealed record AppSettings(string DiscordAppId, string GamePath)
         try
         {
             return File.Exists(SettingsPath)
-                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new("", "")
-                : new("", "");
+                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new("")
+                : new("");
         }
-        catch (JsonException) { return new("", ""); }
+        catch (JsonException) { return new(""); }
     }
 
     public void Save()

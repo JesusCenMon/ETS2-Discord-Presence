@@ -5,11 +5,10 @@ Muestra en Discord qué estás haciendo en **Euro Truck Simulator 2**: entrega, 
 ## Instalar en Windows
 
 1. Descarga `ETS2-Discord-Presence-win-x64.zip` desde [Releases](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases). Descomprímelo y abre `ETS2DiscordPresence.exe`.
-2. La aplicación busca ETS2 en Steam. Pulsa **Instalar componente de ETS2**. Si el juego está abierto, ciérralo primero.
-3. Crea una aplicación llamada **ETS2 Discord Presence** en el [portal de Discord](https://discord.com/developers/applications). Copia su **Application ID** y pégalo en la ventana. Este paso se hace una sola vez.
-4. Abre Discord de escritorio y ETS2. Pulsa **Iniciar**. Puedes minimizar la ventana: queda junto al reloj.
+2. La aplicación busca ETS2 en Steam. Pulsa **Instalar componente**. Si el juego está abierto, ciérralo primero.
+3. Abre Discord de escritorio y ETS2. La aplicación intentará conectarse sola. Puedes minimizar la ventana: queda junto al reloj.
 
-Después de configurarlo, la aplicación recuerda tus datos y se inicia automáticamente cuando vuelves a abrirla. Si ETS2 está cerrado, la actividad se borra.
+Después de instalar el componente, la aplicación recuerda dónde está ETS2 y se conecta automáticamente cuando vuelves a abrirla. Si ETS2 está cerrado, la actividad se borra.
 
 **Aviso:** esta aplicación se distribuye por GitHub. Los mods de ETS2 en Steam Workshop no pueden instalar y ejecutar por sí solos el componente que lee el juego. No es un mod de suscripción automática.
 
@@ -20,18 +19,20 @@ Después de configurarlo, la aplicación recuerda tus datos y se inicia automát
 - Ciudad cercana: una **estimación**, calculada con una lista de ciudades del mapa base. Puede faltar en expansiones y mapas modificados; entonces la aplicación omite la ciudad.
 - En pausa: indica que el juego está en pausa.
 
-La actividad aparece bajo el nombre de la aplicación que creaste en Discord. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
+La actividad aparece como **ETS2 Presence** en Discord. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
 
 ## Problemas frecuentes
 
 - **No aparece ETS2:** pulsa «Buscar...» y selecciona la carpeta `Euro Truck Simulator 2` dentro de tu biblioteca de Steam.
-- **No aparece la actividad:** abre Discord de escritorio, revisa que «Compartir mi actividad» esté activado y confirma que el ID copiado sea el de la aplicación que creaste.
+- **No aparece la actividad:** abre Discord de escritorio y revisa que «Compartir mi actividad» esté activado.
 - **La aplicación espera datos:** reinicia ETS2 después de instalar el componente. Confirma que aceptaste el aviso de SDK avanzado del juego.
 - **Ciudad incorrecta:** la ubicación es aproximada y la lista no cubre todos los DLC ni mapas externos.
 
 ## Desarrollo
 
 Requiere .NET 10 SDK en Windows.
+
+El ID público de la aplicación registrada en Discord está en `DiscordIdentity.cs` y viene incluido en la descarga.
 
 ```powershell
 dotnet test tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj -c Release
