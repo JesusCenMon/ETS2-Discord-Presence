@@ -5,8 +5,9 @@ using System.Text.Json;
 namespace Ets2DiscordPresence;
 
 internal sealed record TripEntry(Guid Id, string Key, string Origin, string Destination, string Cargo,
-    DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds, string Notes = "", string Tags = "", bool Favorite = false);
-internal sealed record JournalData(List<TripEntry> Entries, List<TripEntry> Pending);
+    DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds, string Notes = "", string Tags = "", bool Favorite = false, string? Truck = null, double FuelLitres = 0, string? Recording = null,
+    DateTimeOffset? DeletedAt = null);
+internal sealed record JournalData(List<TripEntry> Entries, List<TripEntry> Pending, List<TripEntry>? Trash = null);
 
 internal sealed class TripJournal
 {
@@ -22,20 +23,22 @@ internal sealed class TripJournal
     private bool dirty;
 
     public IReadOnlyList<TripEntry> Entries => data.Entries;
+    public IReadOnlyList<TripEntry> Trash => data.Trash!;
     public string? Error { get; private set; }
     public bool Recovered { get; private set; }
 
     public TripJournal(string? path = null)
     {
         this.path = path ?? Path.Combine(DataFolder, "trips.json");
-        data = new([], []);
+        data = new([], [], []);
         try
         {
             if (File.Exists(this.path))
             {
                 var saved = JsonSerializer.Deserialize<JournalData>(File.ReadAllText(this.path));
                 if (saved?.Entries is null || saved.Pending is null) throw new JsonException();
-                data = saved;
+                data = saved with { Trash = saved.Trash ?? [] };
+                data.Trash!.RemoveAll(entry => entry.DeletedAt < DateTimeOffset.UtcNow.AddDays(-30));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -90,7 +93,7 @@ internal sealed class TripJournal
                 active = data.Pending.LastOrDefault(item => item.Key == key);
                 Recovered = active is not null;
                 active ??= new TripEntry(Guid.NewGuid(), key, trip.SourceCity, trip.DestinationCity, trip.Cargo,
-                    utc, null, "", 0, 0);
+                    utc, null, "", 0, 0, Truck: TruckLabel(trip.Truck));
                 SaveActive();
                 Flush(now);
             }
@@ -100,7 +103,12 @@ internal sealed class TripJournal
                 var elapsed = now - previousAt;
                 if (elapsed is > 0 and <= 6000 && Math.Abs(signals.Speed) > .25f && delta is >= 0 and <= 10)
                 {
-                    active = active! with { Km = active.Km + delta, DrivingSeconds = active.DrivingSeconds + elapsed / 1000d };
+                    var litres = previous.Truck?.Litres - trip.Truck?.Litres;
+                    active = active! with
+                    {
+                        Km = active.Km + delta, DrivingSeconds = active.DrivingSeconds + elapsed / 1000d,
+                        FuelLitres = active.FuelLitres + (litres is > 0 and < 25 ? litres.Value : 0)
+                    };
                     SaveActive();
                 }
             }
@@ -147,11 +155,75 @@ internal sealed class TripJournal
         if (index < 0) return false;
         var previous = data.Entries[index];
         data.Entries.RemoveAt(index);
+        data.Trash!.Add(previous with { DeletedAt = DateTimeOffset.UtcNow });
         dirty = true;
         Flush();
         if (Error is null) return true;
+        data.Trash.RemoveAt(data.Trash.Count - 1);
         data.Entries.Insert(index, previous);
         return false;
+    }
+
+    public bool Restore(Guid id)
+    {
+        var entry = data.Trash!.Find(item => item.Id == id);
+        if (entry is null || data.Entries.Any(item => item.Id == id)) return false;
+        data.Trash.Remove(entry);
+        data.Entries.Add(entry with { DeletedAt = null });
+        dirty = true;
+        Flush();
+        if (Error is null) return true;
+        data.Entries.RemoveAt(data.Entries.Count - 1);
+        data.Trash.Add(entry);
+        return false;
+    }
+
+    public void AttachRecording(Guid id, string recording)
+    {
+        var index = data.Entries.FindIndex(entry => entry.Id == id);
+        if (index < 0) return;
+        data.Entries[index] = data.Entries[index] with { Recording = recording };
+        dirty = true;
+        Flush();
+    }
+
+    public bool Move(Guid id, TripJournal target)
+    {
+        if (target.Error is not null || Error is not null || string.Equals(path, target.path, StringComparison.OrdinalIgnoreCase)) return false;
+        var entry = data.Entries.Find(item => item.Id == id);
+        if (entry is null) return false;
+        var index = data.Entries.IndexOf(entry);
+        var added = !target.data.Entries.Any(item => item.Id == id);
+        if (added)
+        {
+            target.data.Entries.Add(entry);
+            target.dirty = true;
+            target.Flush();
+            if (target.Error is not null)
+            {
+                target.data.Entries.Remove(entry);
+                return false;
+            }
+        }
+        data.Entries.RemoveAt(index);
+        dirty = true;
+        Flush();
+        if (Error is null) return true;
+        data.Entries.Insert(index, entry);
+        if (added)
+        {
+            target.data.Entries.Remove(entry);
+            target.dirty = true;
+            target.Flush();
+        }
+        return false;
+    }
+
+    private static string? TruckLabel(TruckInfo? truck)
+    {
+        if (truck is null) return null;
+        var label = $"{truck.Brand} {truck.Model}".Trim();
+        return label.Length == 0 ? null : label;
     }
 
     public void Flush(long now = 0)

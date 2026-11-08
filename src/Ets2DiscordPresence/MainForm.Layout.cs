@@ -23,7 +23,7 @@ internal sealed partial class MainForm
     private readonly Label details = TextLabel("Sin actividad para publicar", 12, true);
     private readonly Label state = TextLabel("", 10);
     private readonly Label guidance = TextLabel("Preparando la conexión…", 10);
-    private readonly Label previewName = TextLabel("ETS2 Presence", 10, true);
+    private readonly Label previewName = TextLabel(DiscordIdentity.ActivityName, 10, true);
     private readonly ProgressBar progress = new() { Dock = DockStyle.Top, Height = 8, TabStop = false };
     private readonly Button toggle = MakeButton("Pausar publicación");
     private readonly Button locate = MakeButton("Buscar ETS2");
@@ -104,14 +104,15 @@ internal sealed partial class MainForm
         truckCard.Margin = new Padding(0, 8, 0, 0);
         fuelStatus.ForeColor = Foreground;
         AddRows(truckCard, truckName, truckStats, fuelStatus);
-        AddRows(travel, truckCard);
+        AddRows(travel, truckCard, driveSummary);
 
         preview.BackColor = Surface;
         preview.Padding = new Padding(16, 10, 16, 9);
         preview.Margin = new Padding(0, 0, 0, 12);
         var previewTitle = UiLabel("VISTA PREVIA EN DISCORD", "DISCORD PREVIEW", 9, true);
         previewTitle.ForeColor = Accent;
-        AddRows(preview, previewTitle, previewName, details, state);
+        ConfigurePreviewArt();
+        AddRows(preview, previewTitle, previewName, details, state, previewArt, previewMetadata);
 
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -135,21 +136,45 @@ internal sealed partial class MainForm
             Margin = new Padding(0, 4, 8, 4), Padding = new Padding(4), TabStop = true };
         tools.Items.Add(more);
         var obs = menu.Items.Add("OBS", null, (_, _) => ShowCaptureCard());
-        var privacy = menu.Items.Add("", null, (_, _) => ToggleDestinationPrivacy());
+        var privacy = menu.Items.Add("", null, (_, _) => ShowPrivacyMenu(tools));
+        var profiles = new ToolStripMenuItem();
+        menu.Items.Add(profiles);
+        var dashboardModes = new[] { ("full", "Completo", "Full"), ("drive", "Conducción", "Driving"), ("stream", "Transmisión", "Streaming") };
+        foreach (var (key, es, en) in dashboardModes)
+            profiles.DropDownItems.Add(L(es, en), null, (_, _) =>
+            {
+                SavePreferences(preferences with { Options = preferences.Features with { Layout = key } });
+                ArrangeLayout();
+            });
+        var simulation = menu.Items.Add("", null, (_, _) => ShowSimulation());
+        var floating = menu.Items.Add("", null, (_, _) => ShowTrayQuickPanel());
         var monitor = menu.Items.Add("", null, (_, _) => ToggleMonitor());
         var guide = menu.Items.Add("", null, (_, _) => SavePreferences(preferences with { GuideDismissed = true }));
-        var update = menu.Items.Add("", null, (_, _) => { if (updateUrl is not null) OpenExternal(updateUrl); });
+        var update = menu.Items.Add("", null, (_, _) => ShowUpdate());
+        var rollback = menu.Items.Add("", null, (_, _) => RollBackUpdate());
         more.Text = L("Más opciones", "More options");
         more.DropDownOpening += (_, _) =>
         {
             more.Text = L("Más opciones", "More options");
             obs.Text = L("Tarjeta OBS", "OBS card");
-            privacy.Text = DestinationPrivacyLabel();
+            privacy.Text = L("Privacidad y silencio…", "Privacy and mute…");
+            profiles.Text = L("Perfil de interfaz", "Dashboard profile");
+            for (var i = 0; i < dashboardModes.Length; i++)
+            {
+                var entry = dashboardModes[i];
+                var item = (ToolStripMenuItem)profiles.DropDownItems[i];
+                item.Text = L(entry.Item2, entry.Item3);
+                item.Checked = entry.Item1 == preferences.Features.Layout;
+            }
+            simulation.Text = L("Prueba local…", "Local test…");
+            floating.Text = L("Ventana flotante", "Floating window");
             monitor.Text = fullScreen ? L("Salir de pantalla completa", "Exit full screen") : L("Segundo monitor", "Second monitor");
             guide.Text = L("Ocultar guía", "Hide guide");
             guide.Visible = !preferences.GuideDismissed && !fullScreen;
-            update.Text = L($"Descargar v{updateVersion}", $"Download v{updateVersion}");
-            update.Visible = updateUrl is not null;
+            update.Text = L($"Actualizar a v{availableUpdate?.Version}…", $"Update to v{availableUpdate?.Version}…");
+            update.Visible = availableUpdate is not null;
+            rollback.Text = L("Volver a la versión anterior…", "Restore previous version…");
+            rollback.Visible = File.Exists(AppUpdater.Previous(Application.ExecutablePath));
         };
         settingsButton.TextChanged += (_, _) => more.Text = L("Más opciones", "More options");
         actions.Controls.Add(tools);
@@ -159,6 +184,7 @@ internal sealed partial class MainForm
 
         AddRows(mapSection, tripMap, MapControls(tripMap, translate: true));
         AddRows(header, actions);
+        AddDashboardActions(actions);
         AddRows(tripPanel, travel, connections, guidance, onboarding, preview, mapSection, finishBanner);
         panelSections.Add("trip", travel);
         panelSections.Add("discord", preview);
@@ -172,7 +198,8 @@ internal sealed partial class MainForm
         side.Margin = new Padding(14, 0, 0, 0);
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        side.Controls.Add(artwork, 0, 1);
+        side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        side.Controls.Add(artwork, 0, 2);
         body.Controls.Add(side, 1, 0);
         scroll.ClientSizeChanged += (_, _) => ArrangeLayout();
         ArrangeLayout();
@@ -187,9 +214,13 @@ internal sealed partial class MainForm
         var narrow = scroll.ClientSize.Width / scale < 790;
         var mapAtSide = !narrow && !compact && !fullScreen && preferences.PanelOrder is null
             && preferences.HiddenPanels?.Contains("map") != true;
-        var hasSide = showArtwork || mapAtSide;
+        var previewAtSide = !narrow && !compact && !fullScreen && preferences.Features.Layout != "drive"
+            && preferences.PanelOrder is null && preferences.HiddenPanels?.Contains("discord") != true;
+        var hasSide = showArtwork || mapAtSide || previewAtSide;
         var mapWasAtSide = mapSection.Parent == side;
-        if (stacked != narrow || compactLayout != compact || artworkVisible != hasSide || mapWasAtSide != mapAtSide)
+        var previewWasAtSide = preview.Parent == side;
+        if (stacked != narrow || compactLayout != compact || artworkVisible != hasSide
+            || mapWasAtSide != mapAtSide || previewWasAtSide != previewAtSide)
         {
             stacked = narrow;
             compactLayout = compact;
@@ -209,19 +240,24 @@ internal sealed partial class MainForm
             {
                 tripPanel.Controls.Add(mapSection, 0, 5);
             }
+            if (previewAtSide) side.Controls.Add(preview, 0, 1);
+            else if (previewWasAtSide) tripPanel.Controls.Add(preview, 0, 4);
             OrderTripPanels();
             body.ResumeLayout(true);
         }
         artwork.Visible = showArtwork;
 
         var width = Math.Max(220, scroll.ClientSize.Width - body.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+        var previewWidth = previewAtSide ? (int)(width * .33) - side.Margin.Horizontal : width;
         if (!narrow && hasSide) width = (int)(width * .67);
+        if (!previewAtSide) previewWidth = width;
         SetWrap(cargo, width - travel.Padding.Horizontal);
         SetWrap(cityLabel, width - travel.Padding.Horizontal);
         SetWrap(origin, (int)((width - travel.Padding.Horizontal) * .45));
         SetWrap(destination, (int)((width - travel.Padding.Horizontal) * .45));
-        SetWrap(state, width - preview.Padding.Horizontal);
-        SetWrap(details, width - preview.Padding.Horizontal);
+        SetWrap(state, previewWidth - preview.Padding.Horizontal);
+        SetWrap(details, previewWidth - preview.Padding.Horizontal);
+        SetWrap(driveSummary, width - travel.Padding.Horizontal);
         SetWrap(guidance, width);
         SetWrap(onboarding, width);
         SetWrap(timeline, width - travel.Padding.Horizontal);
@@ -259,17 +295,21 @@ internal sealed partial class MainForm
         cargo.Visible = preferences.HiddenPanels?.Contains("cargo") != true;
         route.Visible = trip?.OnJob == true && preferences.HiddenPanels?.Contains("route") != true;
         cityLabel.Visible = preferences.HiddenPanels?.Contains("location") != true;
-        metrics.Visible = preferences.HiddenPanels?.Contains("metrics") != true;
+        metrics.Visible = (trip?.OnJob == true || trip?.RemainingKm is not null)
+            && preferences.HiddenPanels?.Contains("metrics") != true;
         origin.Text = string.IsNullOrWhiteSpace(trip?.SourceCity) ? "—" : trip.SourceCity;
         destination.Text = string.IsNullOrWhiteSpace(trip?.DestinationCity) ? "—" : trip.DestinationCity;
         cityLabel.Text = nearby is null ? L("Ubicación aproximada · No disponible", "Approximate location · Unavailable") : L($"Ubicación aproximada · Cerca de {nearby}", $"Approximate location · Near {nearby}");
-        distance.Text = trip?.RemainingKm is { } km ? $"{Math.Ceiling(km):N0} km" : "—";
-        arrival.Text = trip?.ArrivalTime ?? "—";
+        distance.Text = trip?.RemainingKm is { } km ? AppOptions.Distance(km, preferences.Features.Miles) : "—";
+        arrival.Text = trip?.ArrivalTime is { } eta && preferences.Features.Clock12
+            && DateTime.TryParseExact(eta, "HH:mm", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var clock)
+                ? clock.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture) : trip?.ArrivalTime ?? "—";
         var percent = trip?.Progress;
         progressArea.Visible = percent.HasValue && preferences.HiddenPanels?.Contains("metrics") != true;
         progress.Value = percent ?? 0;
         progressCaption.Text = percent.HasValue ? L($"Progreso estimado · {percent} %", $"Estimated progress · {percent}%") : "";
-        previewName.Text = demo ? L("ETS2 Presence · Ejemplo local", "ETS2 Presence · Local example") : "ETS2 Presence";
+        previewName.Text = demo ? $"{DiscordIdentity.ActivityName} · {L("Ejemplo local", "Local example")}" : DiscordIdentity.ActivityName;
         details.Text = demo || preferences.Sharing ? presence?.Details ?? L("Sin actividad para publicar", "No activity to publish") : L("Publicación en pausa", "Publishing paused");
         state.Text = demo || preferences.Sharing ? presence?.State ?? L("Entra a una partida para ver la actividad.", "Enter a game session to see the activity.")
             : L("El viaje se sigue mostrando en el panel.", "The trip is still visible on the dashboard.");

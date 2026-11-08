@@ -11,13 +11,17 @@ internal sealed partial class MainForm
     private void ShowRecordings()
     {
         using var window = ToolWindow(L("Repeticiones", "Replays"), new Size(660, 420));
-        var list = new ListBox { Dock = DockStyle.Fill, AccessibleName = L("Grabaciones locales", "Local recordings") };
+        var list = new ListBox { Dock = DockStyle.Fill, SelectionMode = SelectionMode.MultiExtended, AccessibleName = L("Grabaciones locales", "Local recordings") };
         var bar = ToolBar();
         var record = MakeButton("");
         var play = MakeButton(L("Reproducir", "Play"));
         var open = MakeButton(L("Abrir archivo…", "Open file…"));
         var delete = MakeButton(L("Eliminar", "Delete"));
-        bar.Controls.AddRange([record, play, open, delete]);
+        var pause = MakeButton(L("Pausar grabación", "Pause recording"));
+        var marker = MakeButton(L("Marcar · Ctrl + Alt + F12", "Mark · Ctrl + Alt + F12"));
+        var compare = MakeButton(L("Comparar dos", "Compare two"));
+        var trash = MakeButton(L("Papelera", "Trash"));
+        bar.Controls.AddRange([record, pause, marker, play, compare, open, delete, trash]);
         var heading = Grid(1);
         heading.Padding = new Padding(12, 10, 12, 5);
         var info = TextLabel("", 10);
@@ -42,13 +46,29 @@ internal sealed partial class MainForm
             }
             record.Text = recording is null ? L("Empezar a grabar", "Start recording") : L("Detener grabación", "Stop recording");
             if (list.Items.Count > 0) list.SelectedIndex = 0;
-            play.Enabled = delete.Enabled = list.SelectedIndex >= 0;
+            UpdateButtons();
+        }
+        void UpdateButtons()
+        {
+            play.Enabled = delete.Enabled = list.SelectedItems.Count == 1;
+            compare.Enabled = list.SelectedItems.Count == 2;
+            pause.Enabled = recording is not null;
+            marker.Enabled = recording is not null && !recordingPaused;
+            pause.Text = recordingPaused ? L("Reanudar grabación", "Resume recording") : L("Pausar grabación", "Pause recording");
         }
         record.Click += (_, _) => { ToggleRecording(window); Populate(); };
-        list.SelectedIndexChanged += (_, _) => play.Enabled = delete.Enabled = list.SelectedIndex >= 0;
+        list.SelectedIndexChanged += (_, _) => UpdateButtons();
+        pause.Click += (_, _) => { PauseRecording(); UpdateButtons(); };
+        marker.Click += (_, _) => AddRecordingMarker();
+        trash.Click += (_, _) => { ShowRecordingTrash(window); Populate(); };
+        compare.Click += (_, _) =>
+        {
+            if (list.SelectedItems.Cast<RecordingItem>().ToArray() is [var first, var second])
+                CompareReplays(first.Path, second.Path, window);
+        };
         void PlaySelected()
         {
-            if (list.SelectedItem is RecordingItem item) ShowPlayback(item.Path, window);
+            if (list.SelectedItems.Count == 1 && list.SelectedItem is RecordingItem item) ShowPlayback(item.Path, window);
         }
         play.Click += (_, _) => PlaySelected();
         list.DoubleClick += (_, _) => PlaySelected();
@@ -59,9 +79,9 @@ internal sealed partial class MainForm
         };
         delete.Click += (_, _) =>
         {
-            if (list.SelectedItem is not RecordingItem item || !Confirm(window,
-                L("¿Eliminar esta grabación local?", "Delete this local recording?"))) return;
-            DataAction(window, () => File.Delete(item.Path));
+            if (list.SelectedItems.Count != 1 || list.SelectedItem is not RecordingItem item || !Confirm(window,
+                L("¿Enviar esta grabación a la papelera?", "Move this recording to the trash?"))) return;
+            DataAction(window, () => LocalData.TrashRecording(item.Path));
             Populate();
         };
         Populate();
@@ -96,14 +116,27 @@ internal sealed partial class MainForm
         speed.SelectedIndex = 1;
         var moments = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 225, AccessibleName = L("Saltar a un momento del viaje", "Jump to a milestone") };
         moments.Items.Add(L("Saltar a un momento…", "Jump to a milestone…"));
-        foreach (var (elapsed, kind) in TelemetryReplay.Milestones(data))
-            moments.Items.Add(new ReplayMoment(elapsed, kind switch
-            {
-                "pickup" => L("Recogida", "Pickup"), "ferry" => "Ferry", _ => L("Entrega", "Delivery")
-            }));
-        moments.SelectedIndex = 0;
-        moments.Enabled = moments.Items.Count > 1;
-        bar.Controls.AddRange([play, speed, moments]);
+        void ListMoments()
+        {
+            while (moments.Items.Count > 1) moments.Items.RemoveAt(1);
+            foreach (var (elapsed, kind) in TelemetryReplay.Milestones(data))
+                moments.Items.Add(new ReplayMoment(elapsed, kind switch
+                {
+                    "pickup" => L("Recogida", "Pickup"), "ferry" => "Ferry", "delivery" => L("Entrega", "Delivery"), _ => kind
+                }));
+            moments.SelectedIndex = 0;
+            moments.Enabled = moments.Items.Count > 1;
+        }
+        ListMoments();
+        var trim = MakeButton(L("Recortar…", "Trim…"));
+        trim.Click += (_, _) => TrimReplay(path, data, slider.Value, window);
+        var rename = MakeButton(L("Nombrar marcador…", "Name marker…"));
+        rename.Enabled = data.Any(frame => !string.IsNullOrWhiteSpace(frame.Marker));
+        rename.Click += (_, _) =>
+        {
+            if (RenameMarker(path, data, window)) ListMoments();
+        };
+        bar.Controls.AddRange([play, speed, moments, trim, rename]);
         var mapTools = MapControls(map);
         var status = TextLabel("", 11, true);
         var footer = Grid(1);

@@ -4,9 +4,77 @@ namespace Ets2DiscordPresence;
 
 internal sealed class TripMap : Control
 {
-    private readonly List<(double X, double Z, bool Break)> trail = [];
+    private readonly List<(double X, double Z, bool Break, float? Speed, bool Event)> trail = [];
     private IReadOnlyList<MapCity> cities = [];
     private MapCity? destination;
+    private MapCity? origin;
+    private MapCity? focusCity;
+    private (double X, double Z)? fixedCenter;
+    private bool fitTrail;
+    private double bearing;
+    private bool headingUp;
+    private bool follow;
+    private bool colorSpeed;
+    private bool showCities = true;
+    private bool showTrack = true;
+    private bool showTerminals = true;
+    private bool showEvents = true;
+
+    public void ConfigureLayer(string key, bool enabled)
+    {
+        switch (key)
+        {
+            case "heading": headingUp = enabled; break;
+            case "follow":
+                follow = enabled;
+                if (enabled) Recenter();
+                break;
+            case "cities": showCities = enabled; break;
+            case "track": showTrack = enabled; break;
+            case "terminals": showTerminals = enabled; break;
+            case "events": showEvents = enabled; break;
+            case "speed": colorSpeed = enabled; break;
+        }
+        Invalidate();
+    }
+
+    public void FitTrail()
+    {
+        Recenter();
+        fitTrail = true;
+        Invalidate();
+    }
+
+    public void FocusCity(MapCity city)
+    {
+        Recenter();
+        focusCity = city;
+        Invalidate();
+    }
+
+    private void SuspendFollowing()
+    {
+        if (truck is not null) fixedCenter ??= (truck.X, truck.Z);
+    }
+
+    private void AddPoint(TelemetrySnapshot point, bool discontinuity)
+    {
+        var previous = trail.LastOrDefault();
+        if (!discontinuity)
+        {
+            var dx = point.X - previous.X;
+            var dz = point.Z - previous.Z;
+            if (dx * dx + dz * dz >= 100) bearing = Math.Atan2(dx, -dz);
+        }
+        var signals = point.Signals;
+        var marker = signals is not null && (signals.Ferry != lastFerry || point.OnJob && signals.Loaded && !lastLoaded);
+        lastFerry = signals?.Ferry == true;
+        lastLoaded = point.OnJob && signals?.Loaded == true;
+        trail.Add((point.X, point.Z, discontinuity, signals?.Speed, marker));
+    }
+
+    private bool lastFerry;
+    private bool lastLoaded;
     private TelemetrySnapshot? truck;
     private bool interrupted = true;
     private bool english;
@@ -21,6 +89,9 @@ internal sealed class TripMap : Control
     {
         zoom = 1;
         pan = PointF.Empty;
+        fixedCenter = null;
+        focusCity = null;
+        fitTrail = false;
         Invalidate();
     }
 
@@ -34,19 +105,27 @@ internal sealed class TripMap : Control
     {
         trail.Clear();
         interrupted = true;
-        foreach (var frame in frames.Skip(Math.Max(0, index - 3999)).Take(Math.Min(index + 1, 4000)))
+        lastLoaded = lastFerry = false;
+        var stride = Math.Max(1, index / 3999 + 1);
+        for (var at = 0; at <= index; at = Math.Min(index, at + stride))
         {
+            var frame = frames[at];
             if (frame.Trip is not { Paused: false } point || !double.IsFinite(point.X) || !double.IsFinite(point.Z)
                 || Math.Abs(point.X) > 2_000_000 || Math.Abs(point.Z) > 2_000_000)
             {
                 interrupted = true;
-                continue;
             }
-            var last = trail.LastOrDefault();
-            if (!interrupted && last.X == point.X && last.Z == point.Z) continue;
-            var jump = Math.Abs(last.X - point.X) + Math.Abs(last.Z - point.Z) > 4000;
-            trail.Add((point.X, point.Z, interrupted || jump));
-            interrupted = false;
+            else
+            {
+                var last = trail.LastOrDefault();
+                if (interrupted || last.X != point.X || last.Z != point.Z)
+                {
+                    var jump = Math.Abs(last.X - point.X) + Math.Abs(last.Z - point.Z) > 4000;
+                    AddPoint(point, interrupted || jump);
+                    interrupted = false;
+                }
+            }
+            if (at == index) break;
         }
         Invalidate();
     }
@@ -64,6 +143,7 @@ internal sealed class TripMap : Control
         if (e.KeyCode == Keys.Home) Recenter();
         else if (delta != Point.Empty)
         {
+            SuspendFollowing();
             pan = new(pan.X + delta.X, pan.Y + delta.Y);
             Invalidate();
         }
@@ -86,6 +166,7 @@ internal sealed class TripMap : Control
     {
         base.OnMouseMove(e);
         if (!dragging) return;
+        SuspendFollowing();
         pan = new(pan.X + e.X - dragStart.X, pan.Y + e.Y - dragStart.Y);
         dragStart = e.Location;
         Invalidate();
@@ -122,7 +203,7 @@ internal sealed class TripMap : Control
         SetStyle(ControlStyles.Selectable, true);
     }
 
-    public void UpdateMap(TelemetrySnapshot? snapshot, CityLookup catalog, bool isEnglish, bool isLight, bool demo)
+    public void UpdateMap(TelemetrySnapshot? snapshot, CityLookup catalog, bool isEnglish, bool isLight, bool demo, bool repaint = true)
     {
         english = isEnglish;
         light = isLight;
@@ -137,6 +218,7 @@ internal sealed class TripMap : Control
 
         truck = snapshot is { } value && double.IsFinite(value.X) && double.IsFinite(value.Z)
             && Math.Abs(value.X) <= 2_000_000 && Math.Abs(value.Z) <= 2_000_000 ? value : null;
+        origin = truck?.OnJob == true ? catalog.FindDestination(truck.SourceCity, null) : null;
         destination = truck?.OnJob == true ? catalog.FindDestination(truck.DestinationCity, truck.Signals?.DestinationId) : null;
         if (truck is null) interrupted = true;
         else if (!truck.Paused && !demo)
@@ -147,12 +229,12 @@ internal sealed class TripMap : Control
             var change = dx * dx + dz * dz;
             if (trail.Count == 0 || interrupted || change >= 100)
             {
-                trail.Add((truck.X, truck.Z, interrupted || change > 16_000_000));
+                AddPoint(truck, interrupted || change > 16_000_000);
                 interrupted = false;
                 if (trail.Count > 4000) trail.RemoveAt(0);
             }
         }
-        Invalidate();
+        if (repaint) Invalidate();
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -169,27 +251,60 @@ internal sealed class TripMap : Control
         for (var y = 0; y < Height; y += 28) g.DrawLine(grid, 0, y, Width, y);
         var caption = english ? "Approximate trip map" : "Mapa aproximado del viaje";
         TextRenderer.DrawText(g, caption, Font, new Rectangle(10, 4, Width - 20, 24), label, TextFormatFlags.EndEllipsis);
-        if (truck is null)
+        if (truck is null && focusCity is null)
         {
             TextRenderer.DrawText(g, english ? "Waiting for the truck's position" : "Esperando la posición del camión",
                 Font, ClientRectangle, label, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             return;
         }
 
-        var left = Math.Min(truck.X - 11_000, destination?.X ?? truck.X);
-        var right = Math.Max(truck.X + 11_000, destination?.X ?? truck.X);
-        var top = Math.Min(truck.Z - 11_000, destination?.Z ?? truck.Z);
-        var bottom = Math.Max(truck.Z + 11_000, destination?.Z ?? truck.Z);
-        var scale = Math.Min(Math.Max(1, Width - 80) / (right - left), Math.Max(1, Height - 80) / (bottom - top)) * zoom;
-        PointF Place(double x, double z) => new((float)(Width / 2d + pan.X + (x - (left + right) / 2) * scale),
-            (float)(Height / 2d + 10 + pan.Y + (z - (top + bottom) / 2) * scale));
+        var centerX = focusCity?.X ?? fixedCenter?.X ?? truck?.X ?? 0;
+        var centerZ = focusCity?.Z ?? fixedCenter?.Z ?? truck?.Z ?? 0;
+        var radiusX = 11_000d;
+        var radiusZ = 11_000d;
+        if (fitTrail && trail.Count > 0)
+        {
+            var minX = trail.Min(point => point.X);
+            var maxX = trail.Max(point => point.X);
+            var minZ = trail.Min(point => point.Z);
+            var maxZ = trail.Max(point => point.Z);
+            centerX = (minX + maxX) / 2;
+            centerZ = (minZ + maxZ) / 2;
+            radiusX = Math.Max(1000, (maxX - minX) / 2);
+            radiusZ = Math.Max(1000, (maxZ - minZ) / 2);
+        }
+        else if (!follow && focusCity is null && destination is { } goal)
+        {
+            radiusX = Math.Max(radiusX, Math.Abs(goal.X - centerX));
+            radiusZ = Math.Max(radiusZ, Math.Abs(goal.Z - centerZ));
+        }
+        var angle = headingUp && !fitTrail ? bearing : 0;
+        var cosine = Math.Cos(angle);
+        var sine = Math.Sin(angle);
+        var scale = Math.Min(Math.Max(1, Width - 80) / (2 * radiusX), Math.Max(1, Height - 80) / (2 * radiusZ)) * zoom;
+        PointF Place(double x, double z)
+        {
+            var dx = x - centerX;
+            var dz = z - centerZ;
+            return new((float)(Width / 2d + pan.X + (dx * cosine + dz * sine) * scale),
+                (float)(Height / 2d + pan.Y + (-dx * sine + dz * cosine) * scale));
+        }
+        var ruler = Math.Max(24, Math.Min(Width / 4, 80));
+        g.DrawLine(Pens.Gray, 12, Height - 31, 12 + ruler, Height - 31);
+        TextRenderer.DrawText(g, $"{ruler / scale:N0} u", Font, new Point(12, Height - 29), label);
+        var north = new PointF(Width - 24, 38);
+        using var compass = new Pen(label, 2) { EndCap = LineCap.ArrowAnchor };
+        var tip = new PointF(north.X - (float)sine * 14, north.Y - (float)cosine * 14);
+        g.DrawLine(compass, north, tip);
+        TextRenderer.DrawText(g, "N", Font, Point.Round(north), label);
 
         using var track = new Pen(accent, 2);
-        for (var i = 1; i < trail.Count; i++)
-            if (!trail[i].Break) g.DrawLine(track, Place(trail[i - 1].X, trail[i - 1].Z), Place(trail[i].X, trail[i].Z));
-        if (trail.Count > 1)
-            TextRenderer.DrawText(g, english ? "Line · Recorded track" : "Línea · Recorrido registrado",
-                Font, new Rectangle(10, Height - 22, Width - 20, 20), accent, TextFormatFlags.EndEllipsis);
+        using var slow = new Pen(light ? Color.DarkOrange : Color.Gold, 2);
+        if (showTrack)
+            for (var i = 1; i < trail.Count; i++)
+                if (!trail[i].Break)
+                    g.DrawLine(colorSpeed && trail[i].Speed is { } speed && Math.Abs(speed) < 12 ? slow : track,
+                        Place(trail[i - 1].X, trail[i - 1].Z), Place(trail[i].X, trail[i].Z));
 
         var occupied = new List<Rectangle>();
         void Marker(string name, PointF point, Color color, int size)
@@ -207,10 +322,17 @@ internal sealed class TripMap : Control
             occupied.Add(box);
         }
 
-        Marker(english ? "Truck" : "Camión", Place(truck.X, truck.Z), accent, 10);
-        if (destination is { } target) Marker(truck.DestinationCity, Place(target.X, target.Z), label, 8);
-        foreach (var city in cities.Where(city => ClientRectangle.Contains(Point.Round(Place(city.X, city.Z))))
-            .OrderBy(city => Math.Abs(truck.X - city.X) + Math.Abs(truck.Z - city.Z)).Take(12))
-            if (city != destination) Marker(city.Name, Place(city.X, city.Z), label, 4);
+        if (truck is not null) Marker(english ? "Truck" : "Camión", Place(truck.X, truck.Z), accent, 10);
+        if (focusCity is { } selected) Marker(selected.Name, Place(selected.X, selected.Z), accent, 8);
+        if (showTerminals && origin is { } start) Marker(start.Name, Place(start.X, start.Z), label, 8);
+        if (showTerminals && destination is { } target) Marker(target.Name, Place(target.X, target.Z), label, 8);
+        if (showEvents)
+            foreach (var point in trail.Where(point => point.Event).TakeLast(24))
+                Marker(english ? "Event" : "Evento", Place(point.X, point.Z), accent, 6);
+        if (showCities)
+            foreach (var city in cities.Where(city => ClientRectangle.Contains(Point.Round(Place(city.X, city.Z))))
+                .OrderBy(city => Math.Abs(centerX - city.X) + Math.Abs(centerZ - city.Z)).Take(12))
+                if (city != destination && city != origin && city != focusCity)
+                    Marker(city.Name, Place(city.X, city.Z), label, 4);
     }
 }

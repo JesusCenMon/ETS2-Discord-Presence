@@ -41,14 +41,16 @@ internal sealed partial class MainForm : Form
     private string? setupError;
     private string? settingsError;
     private string? gamePath;
-    private string? updateUrl;
-    private Version? updateVersion;
+    private AppUpdate? availableUpdate;
     private long nextGameCheck;
     private ulong? lastFrame;
     private long lastFrameAt;
     private string? city;
     private string? cityCandidate;
     private int citySamples;
+    private string? countryCandidate;
+    private string? currentCountry;
+    private int countrySamples;
     private uint? lastRevision;
 
     public MainForm(bool startMinimized = false)
@@ -111,7 +113,8 @@ internal sealed partial class MainForm : Form
             tray.Dispose();
             trayMenu.Dispose();
             journal.Flush();
-            recording?.Dispose();
+            overlay?.Dispose();
+            FinishRecording();
             captureWindow?.Close();
             quickWindow?.Close();
             appIcon.Dispose();
@@ -122,13 +125,22 @@ internal sealed partial class MainForm : Form
     private async void Start()
     {
         if (startMinimized) Hide();
+        AppUpdater.CleanWorker(Application.ExecutablePath);
+        if (AppUpdater.ConsumeFailure(Application.ExecutablePath))
+            settingsError = L("La actualización no se pudo completar.", "The update could not be completed.");
         discord.OnReady += (_, _) =>
         {
             discordWasReady = true;
             Interlocked.Increment(ref connectionGeneration);
             discordReady = true;
         };
-        discord.OnClose += (_, _) => discordReady = false;
+        discord.OnPresenceUpdate += (_, message) =>
+        {
+            var sent = lastSent;
+            discordConfirmed = sent is not null && message.Presence is { } ack
+                && ack.Details == sent.Details && ack.State == sent.State;
+        };
+        discord.OnClose += (_, _) => { discordReady = false; discordConfirmed = false; };
         discord.OnConnectionFailed += (_, _) => discordReady = false;
         discord.Initialize();
         DiscoverGame();
@@ -146,8 +158,7 @@ internal sealed partial class MainForm : Form
             var release = await DesktopServices.CheckForUpdateAsync(lifetime.Token);
             if (release is { } found && !IsDisposed)
             {
-                updateUrl = found.Url;
-                updateVersion = found.Version;
+                availableUpdate = found;
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
@@ -254,12 +265,23 @@ internal sealed partial class MainForm : Form
 
     private void RefreshPresence()
     {
-        var ready = discordReady;
+        var ready = discordReady && demoScenario != "offline";
         SetStatus(discordStatus, ready ? L("Discord · Conectado", "Discord · Connected") :
             discordWasReady ? L("Discord · Reconectando…", "Discord · Reconnecting…") : L("Discord · Esperando la app de escritorio", "Discord · Waiting for desktop app"), ready);
 
         var now = Environment.TickCount64;
         var running = IsGameRunning();
+        gameRunning = running;
+        if (running) sessionStarted ??= DateTime.UtcNow;
+        else { sessionStarted = null; privateForSession = false; }
+        if (!preferences.Features.ObsBrowser && overlay is not null)
+        {
+            overlay.Dispose();
+            overlay = null;
+        }
+        try { StartOverlay(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException) { }
+        RunScheduledBackup();
         if (!running) restartNeeded = false;
         if (now >= nextGameCheck && (!gamePrepared || !SteamLocator.IsValidGamePath(gamePath))) DiscoverGame();
 
@@ -277,6 +299,7 @@ internal sealed partial class MainForm : Form
         if (telemetry is null) ResetLocation(running);
         else lastRevision = telemetry.PluginRevision;
 
+        liveSnapshot = telemetry;
         locate.Visible = canLocateGame && telemetry is null;
         launch.Visible = !running;
         var status = telemetry is not null ? L("ETS2 · Viaje detectado", "ETS2 · Trip detected") : frozen ? L("ETS2 · Datos detenidos", "ETS2 · Data stopped")
@@ -285,38 +308,45 @@ internal sealed partial class MainForm : Form
         SetStatus(gameStatus, status, telemetry is not null);
 
         var nearby = telemetry is null ? null : TrackCity(cities.FindNearby(telemetry.X, telemetry.Z));
-        if (recording is not null)
-        {
-            try { TelemetryReplay.Write(recording, new RecordedFrame(now - recordingStarted, telemetry)); }
-            catch (Exception ex) when (ex is IOException or ArgumentException)
-            {
-                try { recording.Dispose(); } catch (IOException) { }
-                recording = null;
-                recordingPath = null;
-                settingsError = L("No se pudo guardar la grabación.", "The recording could not be saved.");
-            }
-        }
+        if (telemetry is not null) TrackCountry(cities.FindCountry(telemetry.X, telemetry.Z));
         var ending = journal.Observe(telemetry, DateTimeOffset.UtcNow, now);
+        UpdateRecording(telemetry, ending, now);
         if (ending is not null) completedTrip = ending;
         else if (telemetry?.OnJob == true) completedTrip = null;
-        var simulated = demo || replayOpen;
-        var trip = demo ? Sample : telemetry;
-        var displayedCity = demo ? "Chambéry" : nearby;
-        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, privateDestination
-            ? preferences with { ShowRoute = false, ShowCity = false } : preferences);
+        var simulated = demo || replayOpen || demoScenario is not null;
+        var trip = demoScenario switch
+        {
+            "pause" => Sample with { Paused = true },
+            "roam" => Sample with { OnJob = false, Cargo = "", SourceCity = "", DestinationCity = "",
+                X = -65398, Z = 48701, RouteDistanceMeters = 0 },
+            "offline" => null,
+            "job" => Sample,
+            _ => demo ? Sample : telemetry
+        };
+        var isExample = demo || demoScenario is not null;
+        var displayedCity = demoScenario == "roam" ? "Madrid" : isExample ? "Chambéry" : nearby;
+        var presenceSettings = privateDestination ? preferences with { ShowRoute = false, ShowCity = false } : preferences;
+        if (trip?.OnJob == false && preferences.Features.HideRoamingLocation)
+            presenceSettings = presenceSettings with { ShowCity = false };
+        if (trip?.OnJob == true && preferences.Features.HideDeliveryLocation)
+            presenceSettings = presenceSettings with { ShowCity = false, ShowRoute = false };
+        var country = demoScenario == "roam" ? "ES" : isExample ? "FR" : currentCountry;
+        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, presenceSettings, country);
         UpdateActivity(telemetry);
         if (presence is not null)
             presence = presence with
             {
-                Started = preferences.ActivityTimer ? activityStarted : null,
-                Image = preferences.ActivityImage ? DiscordIdentity.ActivityImage : null,
+                Started = preferences.ActivityTimer ? isExample ? DateTime.UtcNow.AddMinutes(-3) : preferences.Features.SessionTimer ? sessionStarted : activityStarted : null,
+                Image = preferences.ActivityImage ? DiscordIdentity.ImageFor(presenceSettings.ShowCity ? country : null) : null,
                 Badge = preferences.ActivityImage && trip is not null
                     ? DiscordIdentity.ActivityBadge(trip.Paused ? "paused" : trip.OnJob ? "delivery" : "roam") : null
             };
         RenderTrip(trip, displayedCity, presence);
         RenderExtras(trip, now, running, ready);
         RenderTools(trip, telemetry, ready);
-        tripMap.UpdateMap(trip, cities, English, isLight, demo);
+        UpdateLiveNotices(telemetry, discordReady);
+        RenderDashboard(trip, running, ready, now);
+        tripMap.UpdateMap(trip, cities, English, isLight, isExample, !preferences.Features.LowPower || Visible);
         guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
             : demo ? L("Demostración local. El viaje de ejemplo no se publica.", "Local demo. The sample trip stays local.")
             : !preferences.Sharing ? L("La publicación está pausada. Puedes reanudarla desde este panel o la bandeja.", "Publishing is paused. Resume here or from the tray.")
@@ -325,7 +355,18 @@ internal sealed partial class MainForm : Form
             : setupError ?? (restartNeeded ? L("Reinicia ETS2 para activar la lectura del viaje.", "Restart ETS2 to enable trip data.")
                 : frozen ? L("El juego dejó de enviar datos. Se retiró la actividad anterior.", "The game stopped sending data. The previous activity was cleared.")
                 : running ? (English ? L("Entra a una partida.", "Enter a game session or check the reader in Settings.") : readError ?? "Entra a una partida.") : L("Abre ETS2 para empezar.", "Launch ETS2 to begin.")));
-        Publish(PresencePublication.Select(presence, simulated, preferences.Sharing, ready));
+        var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
+        if (!sharing && preferences.Sharing)
+            guidance.Text = L("La actividad está oculta temporalmente.", "Activity is temporarily hidden.");
+        else if (demoScenario is not null)
+            guidance.Text = L("Prueba local. No se publica en Discord.", "Local test. Nothing is published to Discord.");
+        else if (routeChangedUntil > now && trip?.OnJob == true)
+            guidance.Text = L("La distancia o la llegada cambiaron. ETS2 pudo recalcular la ruta.",
+                "Distance or arrival time changed. ETS2 may have recalculated the route.");
+        else if (quotaWarning is not null && recording is not null) guidance.Text = quotaWarning;
+        var outgoing = PresencePublication.Select(presence, simulated, sharing, discordReady);
+        RenderPreview(outgoing, presence);
+        Publish(outgoing);
     }
 
     private bool IsFresh(TelemetrySnapshot snapshot, long now)
@@ -350,24 +391,39 @@ internal sealed partial class MainForm : Form
         return city;
     }
 
+    private void TrackCountry(string? country)
+    {
+        if (country is null) currentCountry = null;
+        if (country != countryCandidate)
+        {
+            countryCandidate = country;
+            countrySamples = 1;
+        }
+        else if (countrySamples < 3) countrySamples++;
+        if (countrySamples == 3) currentCountry = countryCandidate;
+    }
+
     private void ResetLocation(bool running)
     {
         city = null;
         cityCandidate = null;
-        citySamples = 0;
+        citySamples = countrySamples = 0;
+        currentCountry = countryCandidate = null;
         if (!running) lastFrame = null;
     }
 
     private void Publish(PresenceText? presence)
     {
         if (!publication.ShouldSend(presence, Volatile.Read(ref connectionGeneration))) return;
+        lastSent = presence;
+        discordConfirmed = false;
         if (presence is null) discord.ClearPresence();
         else discord.SetPresence(new RichPresence
         {
             Details = presence.Details, State = presence.State,
             Assets = presence.Image is { } image ? new Assets
             {
-                LargeImageKey = image, LargeImageText = "Euro Truck Simulator 2", SmallImageKey = presence.Badge
+                LargeImageKey = image, LargeImageText = DiscordIdentity.ActivityName, SmallImageKey = presence.Badge
             } : null,
             Timestamps = presence.Started is { } start ? new Timestamps { Start = start } : null
         });
@@ -377,6 +433,7 @@ internal sealed partial class MainForm : Form
     {
         var key = trip is null ? null : trip.OnJob
             ? $"job|{trip.Signals?.Deadline}|{trip.Signals?.JobKey}|{trip.DestinationCity}" : "free";
+        if (trip is null && gameRunning) return;
         if (key == activityKey) return;
         activityKey = key;
         activityStarted = key is null ? null : DateTime.UtcNow;
@@ -386,31 +443,18 @@ internal sealed partial class MainForm : Form
     {
         if (recording is not null)
         {
-            if (!DataAction(owner, recording.Dispose)) return;
-            recording = null;
-            recordingPath = null;
+            manualStopJob = recordedJob ?? JobId(liveSnapshot);
+            FinishRecording();
             MessageBox.Show(owner, L("Grabación guardada.", "Recording saved."), Text);
             return;
         }
-        if (demo || replayOpen)
+        if (demo || replayOpen || demoScenario is not null)
         {
             MessageBox.Show(owner, L("Sal de la demostración o reproducción antes de grabar.", "Exit demo or replay before recording."), Text);
             return;
         }
-        try
-        {
-            Directory.CreateDirectory(LocalData.Recordings);
-            var suffix = Guid.NewGuid().ToString("N")[..8];
-            var file = Path.Combine(LocalData.Recordings, $"ETS2-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}-{suffix}.jsonl");
-            recording = new StreamWriter(new FileStream(file, FileMode.CreateNew));
-            recordingPath = file;
-            recordingStarted = Environment.TickCount64;
-            RefreshPresence();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            MessageBox.Show(owner, L("No se pudo abrir el archivo.", "Could not open the file."), Text);
-        }
+        if (StartRecording(automatic: false, Environment.TickCount64, JobId(liveSnapshot))) RefreshPresence();
+        else MessageBox.Show(owner, settingsError ?? L("No se pudo grabar.", "Could not record."), Text);
     }
 
     private static bool IsGameRunning()

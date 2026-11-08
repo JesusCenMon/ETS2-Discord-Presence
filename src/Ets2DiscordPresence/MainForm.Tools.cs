@@ -8,6 +8,7 @@ internal sealed partial class MainForm
     private const int PrivacyHotkeyId = 81;
     private bool privateDestination;
     private bool hotkeyRegistered;
+    private bool pauseHotkeyRegistered;
     private bool fuelAlerted;
     private bool liveDelivery;
     private bool retentionChecked;
@@ -84,8 +85,58 @@ internal sealed partial class MainForm
         smaller.Click += (_, _) => map.Zoom(.8);
         larger.Click += (_, _) => map.Zoom(1.25);
         center.Click += (_, _) => map.Recenter();
-        bar.Controls.AddRange([smaller, larger, center]);
+        var more = MakeButton(L("Mapa…", "Map…"));
+        if (translate) Translate(more, "Mapa…", "Map…");
+        var menu = new ContextMenuStrip();
+        more.Disposed += (_, _) => menu.Dispose();
+        menu.Items.Add(L("Ver recorrido completo", "Fit full trip"), null, (_, _) => map.FitTrail());
+        menu.Items.Add(L("Buscar ciudad…", "Find city…"), null, (_, _) => SearchMapCity(map));
+        foreach (var (key, title, initial) in new[]
+        {
+            ("heading", L("Rumbo arriba", "Heading up"), false), ("follow", L("Seguir camión", "Follow truck"), false),
+            ("cities", L("Ciudades", "Cities"), true), ("track", L("Recorrido", "Track"), true),
+            ("terminals", L("Origen y destino", "Origin and destination"), true), ("events", L("Eventos", "Events"), true),
+            ("speed", L("Velocidad por color · naranja = lento", "Color by speed · orange = slow"), false)
+        })
+        {
+            var item = new ToolStripMenuItem(title) { CheckOnClick = true, Checked = initial };
+            item.CheckedChanged += (_, _) => map.ConfigureLayer(key, item.Checked);
+            menu.Items.Add(item);
+        }
+        more.Click += (_, _) => menu.Show(more, new Point(0, more.Height));
+        bar.Controls.AddRange([smaller, larger, center, more]);
         return bar;
+    }
+
+    private void SearchMapCity(TripMap map)
+    {
+        using var window = ToolWindow(L("Buscar ciudad", "Find city"), new Size(470, 420));
+        var query = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Escribe el nombre", "Enter a city name") };
+        var list = new ListBox { Dock = DockStyle.Fill, DisplayMember = nameof(MapCity.Name) };
+        void RefreshMatches()
+        {
+            list.Items.Clear();
+            list.Items.AddRange(cities.Cities.Where(city => city.Name.Contains(query.Text.Trim(),
+                StringComparison.CurrentCultureIgnoreCase)).OrderBy(city => city.Name).Take(100).Cast<object>().ToArray());
+            if (list.Items.Count > 0) list.SelectedIndex = 0;
+        }
+        query.TextChanged += (_, _) => RefreshMatches();
+        var choose = MakeButton(L("Centrar en la ciudad", "Center on city"));
+        choose.Dock = DockStyle.Bottom;
+        choose.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not MapCity city) return;
+            map.FocusCity(city);
+            window.Close();
+        };
+        list.DoubleClick += (_, _) => choose.PerformClick();
+        window.AcceptButton = choose;
+        window.Controls.Add(list);
+        window.Controls.Add(choose);
+        window.Controls.Add(query);
+        RefreshMatches();
+        StyleTool(window);
+        window.ShowDialog(map.FindForm() ?? this);
     }
 
     private bool Confirm(IWin32Window owner, string text) =>
@@ -116,6 +167,10 @@ internal sealed partial class MainForm
     {
         if (!IsHandleCreated) return;
         if (hotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId);
+        if (pauseHotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId + 1);
+        pauseHotkeyRegistered = preferences.Features.PauseShortcut && RegisterHotKey(Handle, PrivacyHotkeyId + 1, 0x4003, 0x7A);
+        if (markerHotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId + 2);
+        markerHotkeyRegistered = recording is not null && RegisterHotKey(Handle, PrivacyHotkeyId + 2, 0x4003, 0x7B);
         var key = preferences.PrivacyShortcut;
         hotkeyRegistered = key is >= 1 and <= 3 && RegisterHotKey(Handle, PrivacyHotkeyId, 0x4003, (uint)(0x76 + key));
     }
@@ -129,12 +184,24 @@ internal sealed partial class MainForm
     protected override void OnHandleDestroyed(EventArgs e)
     {
         if (hotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId);
-        hotkeyRegistered = false;
+        if (pauseHotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId + 1);
+        if (markerHotkeyRegistered) UnregisterHotKey(Handle, PrivacyHotkeyId + 2);
+        hotkeyRegistered = pauseHotkeyRegistered = markerHotkeyRegistered = false;
         base.OnHandleDestroyed(e);
     }
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == 0x0312 && m.WParam.ToInt32() == PrivacyHotkeyId + 2)
+        {
+            AddRecordingMarker();
+            return;
+        }
+        if (m.Msg == 0x0312 && m.WParam.ToInt32() == PrivacyHotkeyId + 1)
+        {
+            ToggleSharing();
+            return;
+        }
         if (m.Msg == 0x0312 && m.WParam.ToInt32() == PrivacyHotkeyId)
         {
             ToggleDestinationPrivacy();
@@ -174,8 +241,23 @@ internal sealed partial class MainForm
         privacy.Click += (_, _) => ToggleDestinationPrivacy();
         AddRows(root, TextLabel(L("VIAJE ACTUAL", "CURRENT TRIP"), 10, true), label, bar);
         window.Controls.Add(root);
-        window.Deactivate += (_, _) => window.Close();
-        window.FormClosed += (_, _) => { quickText = null; quickWindow = null; };
+        if (preferences.Features.FloatingBounds is { } bounds
+            && Screen.AllScreens.Any(screen => Rectangle.Intersect(screen.WorkingArea, bounds).Width >= 100))
+        {
+            window.StartPosition = FormStartPosition.Manual;
+            window.Bounds = bounds;
+        }
+        window.FormClosed += (_, _) =>
+        {
+            quickText = null;
+            quickWindow = null;
+            if (!Disposing && !IsDisposed && window.WindowState == FormWindowState.Normal)
+            {
+                preferences = preferences with { Options = preferences.Features with { FloatingBounds = window.Bounds } };
+                try { preferences.Save(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        };
         StyleTool(window);
         RefreshPresence();
         window.Show();
@@ -184,7 +266,8 @@ internal sealed partial class MainForm
     private void ShowCaptureCard()
     {
         if (captureWindow is { IsDisposed: false }) { captureWindow.Activate(); return; }
-        var window = ToolWindow("ETS2 · OBS", new Size(560, 155));
+        var scale = Math.Clamp(preferences.Features.ObsSize, 75, 150) / 100d;
+        var window = ToolWindow("ETS2 · OBS", new Size((int)(560 * scale), (int)(155 * scale)));
         window.MinimumSize = new Size(400, 140);
         window.FormBorderStyle = FormBorderStyle.SizableToolWindow;
         window.BackColor = Color.Fuchsia;
@@ -218,15 +301,16 @@ internal sealed partial class MainForm
         if (!model.StartsWith(brand, StringComparison.OrdinalIgnoreCase)) model = $"{brand} {model}".Trim();
         truckName.Text = model.Length == 0 ? L("Camión · Sin datos", "Truck · No data") : model;
         var odo = trip?.Signals is { Odometer: var reading } && float.IsFinite(reading) && reading > 0
-            ? $"{reading:N0} km" : "—";
+            ? AppOptions.Distance(reading, preferences.Features.Miles) : "—";
         var fuel = truck?.FuelPercent is { } percent ? $"{percent:N0}% · {truck.Litres:N0} L" : "—";
-        truckStats.Text = $"{L("Odómetro", "Odometer")}  {odo}   ·   {L("Combustible", "Fuel")}  {fuel}";
+        truckStats.Text = $"{L("Odómetro", "Odometer")}  {odo}   ·   {L("Combustible", "Fuel")}  {fuel}"
+            + (truck?.RangeKm is > 0 and < 20_000 ? $" · {L("Autonomía", "Range")} {AppOptions.Distance(truck.RangeKm.Value, preferences.Features.Miles)}" : "");
         var liveFuel = live?.Truck?.FuelPercent;
         var liveTruck = live?.Truck is { } current ? $"{current.Brand}|{current.Model}" : null;
         if (liveTruck is not null && liveTruck != fuelTruck) { fuelTruck = liveTruck; fuelAlerted = false; }
         var threshold = preferences.FuelThreshold;
         var low = threshold > 0 && liveFuel <= threshold;
-        if (live is { Paused: false } && low && !fuelAlerted)
+        if (live is { Paused: false } && low && !fuelAlerted && AlertsAllowed(live))
         {
             fuelAlerted = true;
             tray.ShowBalloonTip(4500, L("Combustible bajo", "Low fuel"),
@@ -238,12 +322,17 @@ internal sealed partial class MainForm
 
         var place = live is { OnJob: true } ? live.DestinationCity : live is null
             ? L("Sin viaje activo", "No active trip") : L("Conducción libre", "Free roaming");
-        var remaining = live?.RemainingKm is { } km ? $"{km:N0} km {L("restantes", "remaining")}" : "—";
+        var remaining = live?.RemainingKm is { } km ? $"{AppOptions.Distance(km, preferences.Features.Miles)} {L("restantes", "remaining")}" : "—";
         if (quickText is not null)
             quickText.Text = $"{place}\n{remaining} · Discord {(discordConnected ? L("conectado", "connected") : L("sin conexión", "offline"))}"
                 + (privateDestination ? $"\n{L("Destino oculto en Discord", "Destination hidden on Discord")}" : "");
-        if (captureRoute is not null)
-            captureRoute.Text = live is { OnJob: true } ? $"{live.SourceCity}  →  {live.DestinationCity}" : place;
-        if (captureDistance is not null) captureDistance.Text = remaining;
+        var waiting = live is null || live.Paused || !live.OnJob;
+        var routeForObs = waiting ? (string.IsNullOrWhiteSpace(preferences.Features.ObsWaiting) ? place : preferences.Features.ObsWaiting)
+            : $"{live!.SourceCity}  →  {live.DestinationCity}";
+        if (live?.Paused == true && string.IsNullOrWhiteSpace(preferences.Features.ObsWaiting)) routeForObs = L("En pausa", "Paused");
+        var distanceForObs = waiting ? "" : remaining;
+        if (captureRoute is not null) captureRoute.Text = preferences.Features.ObsRoute ? routeForObs : "";
+        if (captureDistance is not null) captureDistance.Text = preferences.Features.ObsDistance ? distanceForObs : "";
+        overlay?.Update(routeForObs, distanceForObs, preferences.Features);
     }
 }

@@ -22,6 +22,8 @@ internal sealed partial class MainForm
         var style = AddTab(tabs, L("Apariencia", "Appearance"));
         var data = AddTab(tabs, L("Datos locales", "Local data"));
         int[] textSizes = [85, 100, 115, 135];
+        var getFeatures = BuildFeatureSettings(window, tabs, style, discordTab, privacy, game, data);
+        AddSettingsSearch(window, tabs);
         var textSize = Choice(style, L("Tamaño del texto", "Text size"), textSizes.Select(value => $"{value}%").ToArray(),
             Math.Max(0, Array.IndexOf(textSizes, preferences.TextPercent)));
         var shortcuts = Choice(privacy, L("Atajo global para ocultar el destino", "Global shortcut to hide the destination"),
@@ -99,7 +101,7 @@ internal sealed partial class MainForm
         {
             var config = ReadDiscord();
             var presence = PresenceFormatter.Format(Sample, "Chambéry", config);
-            livePreview.Text = config.Sharing ? $"ETS2 Presence\n{presence.Details}\n{presence.State}"
+            livePreview.Text = config.Sharing ? $"{DiscordIdentity.ActivityName}\n{presence.Details}\n{presence.State}"
                 : L("Ejemplo · Publicación en pausa", "Example · Publishing paused");
         }
 
@@ -190,6 +192,7 @@ internal sealed partial class MainForm
                 ActivityImage = image.Checked,
                 ActivityTimer = activityTimer.Checked,
                 ShowArtwork = showArt.Checked,
+                Options = getFeatures(),
                 Compact = compact.Checked,
                 GuideDismissed = !showGuide.Checked,
                 CityCatalog = catalog.SelectedIndex > 0 ? catalog.SelectedItem as string : null,
@@ -202,7 +205,7 @@ internal sealed partial class MainForm
             ResetLocation(IsGameRunning());
             ApplyLanguage();
             RegisterPrivacyShortcut();
-            if (preferences.PrivacyShortcut > 0 && !hotkeyRegistered)
+            if ((preferences.PrivacyShortcut > 0 && !hotkeyRegistered) || (preferences.Features.PauseShortcut && !pauseHotkeyRegistered))
                 MessageBox.Show(window, L("Windows no pudo registrar el atajo. Prueba otra combinación.", "Windows could not register the shortcut. Try another combination."), Text);
             if (themeChanged) MessageBox.Show(window, L("Vuelve a abrir la app para aplicar el tema.", "Reopen the app to apply the theme."), Text);
             ScaleText(this);

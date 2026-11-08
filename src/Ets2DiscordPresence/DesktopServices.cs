@@ -46,7 +46,7 @@ internal static class DesktopServices
         return version;
     }
 
-    public static async Task<(Version Version, string Url)?> CheckForUpdateAsync(CancellationToken cancellationToken)
+    public static async Task<AppUpdate?> CheckForUpdateAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases?per_page=20");
         request.Headers.UserAgent.ParseAdd("ETS2DiscordPresence");
@@ -54,15 +54,20 @@ internal static class DesktopServices
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
         var current = new Version(Version.Major, Version.Minor, Version.Build);
-        return document.RootElement.EnumerateArray()
-            .Where(release => !release.GetProperty("draft").GetBoolean()
-                && release.GetProperty("assets").EnumerateArray().Any(asset => asset.GetProperty("name").GetString() == Asset))
-            .Select(release => release.GetProperty("tag_name").GetString() ?? "")
-            .Select(tag => (Tag: tag, Parsed: System.Version.TryParse(tag.TrimStart('v'), out var parsed) ? parsed : null))
-            .Where(release => release.Parsed is not null && release.Parsed > current)
-            .OrderByDescending(release => release.Parsed)
-            .Select(release => ((Version Version, string Url)?)(release.Parsed!,
-                $"https://github.com/{Repository}/releases/download/{Uri.EscapeDataString(release.Tag)}/{Asset}"))
-            .FirstOrDefault();
+        var updates = new List<AppUpdate>();
+        foreach (var release in document.RootElement.EnumerateArray())
+        {
+            if (release.GetProperty("draft").GetBoolean()) continue;
+            var tag = release.GetProperty("tag_name").GetString() ?? "";
+            if (!System.Version.TryParse(tag.TrimStart('v'), out var parsed) || parsed <= current) continue;
+            foreach (var asset in release.GetProperty("assets").EnumerateArray())
+            {
+                if (asset.GetProperty("name").GetString() != Asset) continue;
+                var digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
+                updates.Add(new AppUpdate(parsed, $"https://github.com/{Repository}/releases/download/{Uri.EscapeDataString(tag)}/{Asset}",
+                    digest?.StartsWith("sha256:", StringComparison.Ordinal) == true ? digest[7..] : null));
+            }
+        }
+        return updates.OrderByDescending(update => update.Version).FirstOrDefault();
     }
 }

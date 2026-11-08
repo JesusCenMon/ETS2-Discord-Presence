@@ -6,14 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ETS2DiscordPresence</AssemblyName>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>../../assets/ets2-presence.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
     <EmbeddedResource Include="../../data/cities_default.json" LogicalName="cities_default.json" />
+    <EmbeddedResource Include="../../data/country_art.json" LogicalName="country_art.json" />
     <EmbeddedResource Include="../../assets/hero-truck.png" LogicalName="hero-truck.png" />
+    <EmbeddedResource Include="../../assets/discord/*.png" LogicalName="%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../assets/ets2-presence.ico" LogicalName="ets2-presence.ico" />
     <EmbeddedResource Include="../../assets/rencloud-telemetry.dll" LogicalName="rencloud-telemetry.dll" />
     <EmbeddedResource Include="../../assets/RENCLOUD-LICENSE.txt" LogicalName="RENCLOUD-LICENSE.txt" />

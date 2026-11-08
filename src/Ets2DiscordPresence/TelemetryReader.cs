@@ -21,7 +21,7 @@ internal sealed record TelemetrySnapshot(
         : null;
 }
 
-internal sealed record TruckInfo(string Brand, string Model, float? Litres, float? Capacity)
+internal sealed record TruckInfo(string Brand, string Model, float? Litres, float? Capacity, float? RangeKm = null, float? FuelPerKm = null)
 {
     public double? FuelPercent => Capacity is > 0 && Litres is >= 0 && Litres <= Capacity
         ? 100d * Litres.Value / Capacity.Value : null;
@@ -113,7 +113,7 @@ internal static class TelemetryReader
                     ReadString(data, 3068, 64), ReadString(data, 2684, 64), ReadString(data, 2812, 64)),
                 DestinationId: ReadString(data, 2684, 64)),
             Truck: new TruckInfo(ReadString(data, 2364, 64), ReadString(data, 2492, 64),
-                FiniteFloat(data, 1000), FiniteFloat(data, 704)));
+                FiniteFloat(data, 1000), FiniteFloat(data, 704), FiniteFloat(data, 1008), FiniteFloat(data, 1004)));
     }
 
     private static float? FiniteFloat(ReadOnlySpan<byte> data, int offset)

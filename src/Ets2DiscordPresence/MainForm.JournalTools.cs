@@ -88,7 +88,7 @@ internal sealed partial class MainForm
             grid.SizeChanged += (_, _) => Wrap();
             AddRows(card, TextLabel($"{L("Viaje", "Trip")} {tripNumber + 1}", 9, true), route, load,
                 TextLabel(Result(entry), 10), TextLabel(entry.Finished?.ToLocalTime().ToString("g") ?? "", 10),
-                TextLabel($"{entry.Km:N1} km", 16, true), TextLabel(FormatDriving(entry.DrivingSeconds), 12, true), tags);
+                TextLabel(AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1"), 16, true), TextLabel(FormatDriving(entry.DrivingSeconds), 12, true), tags);
             grid.Controls.Add(card, tripNumber++, 0);
         }
         var scrollPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, TabStop = false };
@@ -115,7 +115,7 @@ internal sealed partial class MainForm
             Dock = DockStyle.Fill, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, TabStop = false
         };
         days.Columns.Add("day", L("Día", "Day"));
-        days.Columns.Add("km", "km");
+        days.Columns.Add("km", preferences.Features.Miles ? "mi" : "km");
         days.Columns.Add("deliveries", L("Entregas", "Deliveries"));
         days.Columns.Add("driving", L("Al volante", "Driving"));
         var week = StartOfWeek(DateTime.Today);
@@ -128,7 +128,7 @@ internal sealed partial class MainForm
                 var day = week.AddDays(i);
                 var entries = journal.Entries.Where(entry => entry.Finished?.LocalDateTime.Date == day).ToArray();
                 var culture = System.Globalization.CultureInfo.GetCultureInfo(English ? "en-US" : "es-CO");
-                days.Rows.Add(day.ToString("ddd d", culture), $"{entries.Sum(entry => entry.Km):N1}",
+                days.Rows.Add(day.ToString("ddd d", culture), $"{entries.Sum(entry => entry.Km) / (preferences.Features.Miles ? 1.609344 : 1):N1}",
                     entries.Count(entry => entry.Result == "delivered"), FormatDriving(entries.Sum(entry => entry.DrivingSeconds)));
             }
         }

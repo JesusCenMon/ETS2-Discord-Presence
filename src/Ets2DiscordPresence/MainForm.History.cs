@@ -21,7 +21,10 @@ internal sealed partial class MainForm
         var notes = MakeButton(L("Notas y favorito", "Notes and favorite"));
         var remove = MakeButton(L("Eliminar viaje", "Delete trip"));
         compare.AccessibleDescription = L("Selecciona dos filas con Ctrl para comparar.", "Select two rows with Ctrl to compare.");
-        tools.Controls.AddRange([driver, addDriver, calendar, compare, notes, remove]);
+        var report = MakeButton(L("Informe mensual", "Monthly report"));
+        var move = MakeButton(L("Mover viaje", "Move trip"));
+        var trash = MakeButton(L("Papelera", "Trash"));
+        tools.Controls.AddRange([driver, addDriver, calendar, compare, notes, remove, report, move, trash]);
         void ListDrivers()
         {
             driver.Items.Clear();
@@ -52,7 +55,7 @@ internal sealed partial class MainForm
         {
             ("date", L("Fecha", "Date"), 100), ("origin", L("Origen", "Origin"), 90),
             ("destination", L("Destino", "Destination"), 90), ("cargo", L("Carga", "Cargo"), 145),
-            ("result", L("Resultado", "Result"), 86), ("km", "km", 55), ("time", L("Al volante", "Driving"), 75)
+            ("result", L("Resultado", "Result"), 86), ("km", preferences.Features.Miles ? "mi" : "km", 55), ("time", L("Al volante", "Driving"), 75)
         })
         {
             var column = new DataGridViewTextBoxColumn { Name = key, HeaderText = label, FillWeight = size, SortMode = DataGridViewColumnSortMode.NotSortable };
@@ -73,7 +76,7 @@ internal sealed partial class MainForm
             foreach (var entry in entries)
             {
                 var row = history.Rows.Add((entry.Favorite ? "★ " : "") + entry.Finished?.ToLocalTime().ToString("g"),
-                    entry.Origin, entry.Destination, entry.Cargo, Result(entry), $"{entry.Km:N1}", FormatDriving(entry.DrivingSeconds));
+                    entry.Origin, entry.Destination, entry.Cargo, Result(entry), $"{(preferences.Features.Miles ? entry.Km / 1.609344 : entry.Km):N1}", FormatDriving(entry.DrivingSeconds));
                 history.Rows[row].Tag = entry;
             }
             var completed = entries.Where(entry => entry.Result == "delivered").ToArray();
@@ -81,7 +84,7 @@ internal sealed partial class MainForm
                 .OrderByDescending(group => group.Count()).FirstOrDefault()?.Key;
             stats.Text = entries.Length == 0 ? L("Todavía no hay viajes para este filtro.", "No trips match this filter yet.")
                 : $"{completed.Length} {L("entregadas", "delivered")}  ·  {entries.Length - completed.Length} {L("canceladas", "cancelled")}  ·  "
-                    + $"{entries.Sum(entry => entry.Km):N1} km  ·  {FormatDriving(entries.Sum(entry => entry.DrivingSeconds))} {L("al volante", "driving")}"
+                    + $"{AppOptions.Distance(entries.Sum(entry => entry.Km), preferences.Features.Miles, "N1")}  ·  {FormatDriving(entries.Sum(entry => entry.DrivingSeconds))} {L("al volante", "driving")}"
                     + (topRoute is null ? "" : $"\n{L("Ruta más frecuente", "Most frequent route")} · {topRoute}");
             export.Enabled = entries.Length > 0;
             UpdateActions();
@@ -91,7 +94,7 @@ internal sealed partial class MainForm
         void UpdateActions()
         {
             var count = Selection().Length;
-            notes.Enabled = remove.Enabled = count == 1;
+            notes.Enabled = remove.Enabled = move.Enabled = count == 1;
             compare.Enabled = count == 2;
         }
         history.SelectionChanged += (_, _) => UpdateActions();
@@ -112,6 +115,12 @@ internal sealed partial class MainForm
             RefreshHistory();
         };
         calendar.Click += (_, _) => ShowWeek(window);
+        report.Click += (_, _) => ShowMonthly(window);
+        move.Click += (_, _) =>
+        {
+            if (Selection() is [var entry] && MoveTrip(entry, window)) RefreshHistory();
+        };
+        trash.Click += (_, _) => { ShowTripTrash(window); RefreshHistory(); };
         compare.Click += (_, _) =>
         {
             if (Selection() is [var first, var second]) CompareTrips(first, second, window);
@@ -122,7 +131,7 @@ internal sealed partial class MainForm
         };
         remove.Click += (_, _) =>
         {
-            if (Selection() is not [var entry] || !Confirm(window, L("¿Eliminar este viaje del diario?", "Delete this trip from the journal?"))) return;
+            if (Selection() is not [var entry] || !Confirm(window, L("¿Enviar este viaje a la papelera?", "Move this trip to the trash?"))) return;
             if (!journal.Remove(entry.Id)) MessageBox.Show(window, L("No se pudo guardar el diario.", "Could not save the journal."), Text);
             if (completedTrip?.Id == entry.Id) completedTrip = null;
             RefreshHistory();
@@ -164,7 +173,7 @@ internal sealed partial class MainForm
     {
         using var window = new Form
         {
-            Text = L("Resumen del viaje", "Trip summary"), ClientSize = new Size(520, 290),
+            Text = L("Resumen del viaje", "Trip summary"), ClientSize = new Size(560, 380),
             StartPosition = FormStartPosition.CenterParent, BackColor = Background, ForeColor = Foreground
         };
         var content = Grid(1);
@@ -172,8 +181,22 @@ internal sealed partial class MainForm
         var title = TextLabel(Result(entry), 19, true);
         title.ForeColor = Accent;
         AddRows(content, title, TextLabel($"{entry.Origin}  →  {entry.Destination}", 15, true),
-            TextLabel(entry.Cargo, 12), TextLabel($"{entry.Km:N1} km  ·  {FormatDriving(entry.DrivingSeconds)} {L("al volante", "driving")}", 12),
+            TextLabel(entry.Cargo, 12), TextLabel($"{AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1")}  ·  {FormatDriving(entry.DrivingSeconds)} {L("al volante", "driving")}", 12),
             TextLabel(entry.Finished?.ToLocalTime().ToString("g") ?? "", 10));
+        if (entry.Recording is { } file && Path.GetFileName(file) == file && File.Exists(Path.Combine(LocalData.Recordings, file)))
+            AddAction(content, L("Abrir grabación", "Open replay"), () => ShowPlayback(Path.Combine(LocalData.Recordings, file), window));
+        AddAction(content, L("Copiar resumen", "Copy summary"), () =>
+        {
+            try
+            {
+                Clipboard.SetText($"{entry.Origin} → {entry.Destination} · {entry.Cargo}\n"
+                    + $"{AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1")} · {FormatDriving(entry.DrivingSeconds)}");
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                MessageBox.Show(window, L("El portapapeles está ocupado.", "The clipboard is busy."), Text);
+            }
+        });
         AddAction(content, L("Cerrar", "Close"), window.Close);
         window.Controls.Add(content);
         StyleTool(window);

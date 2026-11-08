@@ -82,7 +82,7 @@ internal static class LocalData
                 case "trips":
                     var journal = JsonSerializer.Deserialize<JournalData>(content);
                     if (journal?.Entries is null || journal.Pending is null
-                        || journal.Entries.Concat(journal.Pending).Any(entry => entry is null || entry.Cargo is null
+                        || journal.Entries.Concat(journal.Pending).Concat(journal.Trash ?? []).Any(entry => entry is null || entry.Cargo is null
                             || entry.Origin is null || entry.Destination is null || entry.Km is < 0 or > 1_000_000
                             || entry.DrivingSeconds is < 0 or > 100_000_000))
                         throw new InvalidDataException("Invalid journal.");
@@ -128,15 +128,43 @@ internal static class LocalData
             && !filename.Contains('\\') && filename.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 ? "catalog" : "";
     }
 
+    public static string RecordingTrash => Path.Combine(Recordings, "trash");
+
+    public static void TrashRecording(string path)
+    {
+        Directory.CreateDirectory(RecordingTrash);
+        var destination = Path.Combine(RecordingTrash, Path.GetFileName(path));
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+        File.Move(path, destination);
+    }
+
+    public static void RestoreRecording(string path)
+    {
+        var name = Path.GetFileName(path);
+        File.Move(path, Path.Combine(Recordings, name));
+    }
+
+    public static IEnumerable<string> TrashedRecordings()
+    {
+        if (!Directory.Exists(RecordingTrash)) yield break;
+        var threshold = DateTime.UtcNow.AddDays(-30);
+        foreach (var file in Directory.EnumerateFiles(RecordingTrash, "ETS2-*.jsonl"))
+        {
+            if (File.GetLastWriteTimeUtc(file) >= threshold) yield return file;
+            else File.Delete(file);
+        }
+    }
+
     public static IEnumerable<string> RecordingFiles() => Directory.Exists(Recordings)
         ? Directory.EnumerateFiles(Recordings, "ETS2-*.jsonl").OrderByDescending(File.GetLastWriteTimeUtc) : [];
 
     public static void PruneRecordings(int days, string? active)
     {
+        foreach (var _ in TrashedRecordings()) { }
         if (days <= 0) return;
         var threshold = DateTime.UtcNow.AddDays(-days);
         foreach (var file in RecordingFiles())
             if (!string.Equals(file, active, StringComparison.OrdinalIgnoreCase) && File.GetLastWriteTimeUtc(file) < threshold)
-                File.Delete(file);
+                TrashRecording(file);
     }
 }

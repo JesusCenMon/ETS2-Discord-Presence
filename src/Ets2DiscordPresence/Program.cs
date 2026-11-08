@@ -5,6 +5,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (AppUpdater.HandleWorker(args)) return;
         using var signal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\ETS2DiscordPresence.Show");
         using var instance = new Mutex(true, @"Local\ETS2DiscordPresence.Instance", out var first);
         if (!first)

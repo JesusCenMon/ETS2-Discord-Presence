@@ -113,11 +113,11 @@ internal sealed partial class MainForm
 
     private void RenderExtras(TelemetrySnapshot? trip, long now, bool running, bool ready)
     {
-        onboarding.Visible = !preferences.GuideDismissed && !fullScreen;
+        onboarding.Visible = !preferences.GuideDismissed && !fullScreen && demoScenario is null;
         onboarding.Text = $"{L("Primera conexión", "First connection")}\n"
             + $"1  {(gamePrepared ? "✓" : "○")}  {L("Lector del juego", "Game reader")}   "
             + $"2  {(ready ? "✓" : "○")}  Discord   "
-            + $"3  {(trip is not null && !demo ? "✓" : "○")}  {L("Partida", "Game session")}\n"
+            + $"3  {(liveSnapshot is not null ? "✓" : "○")}  {L("Partida", "Game session")}\n"
             + (restartNeeded ? L("Reinicia ETS2 para cargar el lector.", "Restart ETS2 to load the reader.")
                 : !gamePrepared ? L("Revisa la preparación del lector en Ajustes.", "Check reader setup in Settings.")
                 : !running ? L("Abre ETS2 para seguir.", "Launch ETS2 to continue.")
@@ -143,9 +143,9 @@ internal sealed partial class MainForm
         timeline.Visible = (stage >= 0 || manoeuvre is not null) && preferences.HiddenPanels?.Contains("timeline") != true;
         timeline.Text = string.Join(Environment.NewLine, new[] { stage >= 0 ? steps : null, manoeuvre,
             journal.Recovered && stage >= 0 && !demo ? L("Viaje recuperado del diario", "Trip resumed from the journal") : null }.OfType<string>());
-        summaryButton.Visible = finishBanner.Visible = completedTrip is not null && !demo && !replayOpen;
+        summaryButton.Visible = finishBanner.Visible = completedTrip is not null && !demo && demoScenario is null && !replayOpen;
         if (completedTrip is { } completed)
-            finishBanner.Text = $"{Result(completed)} · {completed.Origin} → {completed.Destination} · {completed.Km:N1} km · {FormatDriving(completed.DrivingSeconds)}";
+            finishBanner.Text = $"{Result(completed)} · {completed.Origin} → {completed.Destination} · {AppOptions.Distance(completed.Km, preferences.Features.Miles, "N1")} · {FormatDriving(completed.DrivingSeconds)}";
         deadlineAlert.Visible = false;
         if (trip is { OnJob: true, Paused: false, RouteSeconds: > 0 and < 604800, Signals.Deadline: > 0 }
             && trip.RemainingKm.HasValue)
