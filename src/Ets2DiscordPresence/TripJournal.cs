@@ -5,13 +5,12 @@ using System.Text.Json;
 namespace Ets2DiscordPresence;
 
 internal sealed record TripEntry(Guid Id, string Key, string Origin, string Destination, string Cargo,
-    DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds);
+    DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds, string Notes = "", string Tags = "", bool Favorite = false);
 internal sealed record JournalData(List<TripEntry> Entries, List<TripEntry> Pending);
 
 internal sealed class TripJournal
 {
-    public static string DataFolder { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ETS2DiscordPresence");
+    public static string DataFolder => LocalData.Folder;
     private readonly string path;
     private readonly JournalData data;
     private TripEntry? active;
@@ -129,16 +128,39 @@ internal sealed class TripJournal
         return null;
     }
 
+    public bool UpdateDetails(Guid id, string notes, string tags, bool favorite)
+    {
+        var index = data.Entries.FindIndex(entry => entry.Id == id);
+        if (index < 0) return false;
+        var previous = data.Entries[index];
+        data.Entries[index] = previous with { Notes = notes, Tags = tags, Favorite = favorite };
+        dirty = true;
+        Flush();
+        if (Error is null) return true;
+        data.Entries[index] = previous;
+        return false;
+    }
+
+    public bool Remove(Guid id)
+    {
+        var index = data.Entries.FindIndex(entry => entry.Id == id);
+        if (index < 0) return false;
+        var previous = data.Entries[index];
+        data.Entries.RemoveAt(index);
+        dirty = true;
+        Flush();
+        if (Error is null) return true;
+        data.Entries.Insert(index, previous);
+        return false;
+    }
+
     public void Flush(long now = 0)
     {
         lastSaved = now;
         if (!dirty || Error == "journal.read") return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var temp = $"{path}.tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(data));
-            File.Move(temp, path, overwrite: true);
+            LocalData.WriteFile(path, JsonSerializer.Serialize(data));
             dirty = false;
             Error = null;
         }

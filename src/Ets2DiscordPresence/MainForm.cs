@@ -8,15 +8,18 @@ internal sealed partial class MainForm : Form
 {
     private static readonly TelemetrySnapshot Sample = new(false, true, "Maquinaria industrial para obras de infraestructura",
         "Lyon", "Turín", -21_500, 27_000, 215_000, 12, 1, 9 * 60 + 30, 10_800, 390,
-        new TripSignals(770, 0, false, false, true, false, false, false, 15, 500, 200, 0, "example", "torino"));
+        new TripSignals(770, 0, false, false, true, false, false, false, 15, 500, 200, 0, "example", "torino"),
+        new TruckInfo("Renault", "T High", 425, 700));
 
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
     private readonly DiscordRpcClient discord = new(DiscordIdentity.ApplicationId);
     private readonly CancellationTokenSource lifetime = new();
     private CityLookup cities;
-    private readonly TripJournal journal = new();
+    private TripJournal journal;
     private TripEntry? completedTrip;
-    private bool isLight;
+    private static bool isLight => Application.ColorMode != SystemColorMode.Dark
+        && (Application.ColorMode != SystemColorMode.System || Application.SystemColorMode != SystemColorMode.Dark)
+        || SystemInformation.HighContrast;
     private readonly Icon appIcon;
     private readonly NotifyIcon tray;
     private readonly ContextMenuStrip trayMenu = new();
@@ -26,9 +29,8 @@ internal sealed partial class MainForm : Form
     private readonly PresencePublication publication = new();
     private StreamWriter? recording;
     private long recordingStarted;
-    private IReadOnlyList<RecordedFrame>? playback;
-    private long playbackStarted;
-    private int playbackIndex;
+    private DateTime? activityStarted;
+    private string? activityKey;
     private volatile bool discordReady;
     private volatile bool discordWasReady;
     private int connectionGeneration;
@@ -40,6 +42,7 @@ internal sealed partial class MainForm : Form
     private string? settingsError;
     private string? gamePath;
     private string? updateUrl;
+    private Version? updateVersion;
     private long nextGameCheck;
     private ulong? lastFrame;
     private long lastFrameAt;
@@ -51,13 +54,13 @@ internal sealed partial class MainForm : Form
     public MainForm(bool startMinimized = false)
     {
         this.startMinimized = startMinimized;
+        journal = new TripJournal(LocalData.JournalPath(preferences.DriverProfile));
         Text = "ETS2 Discord Presence";
         ClientSize = new Size(1070, 710);
         MinimumSize = new Size(400, 390);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Background;
-        ForeColor = Foreground;
+        DoubleBuffered = true;
         using var iconData = AppResources.Open("ets2-presence.ico");
         appIcon = new Icon(iconData);
         Icon = appIcon;
@@ -70,8 +73,10 @@ internal sealed partial class MainForm : Form
         trayMenu.Items.Add("Abrir panel", null, (_, _) => RestoreWindow());
         trayPause.Click += (_, _) => ToggleSharing();
         trayMenu.Items.Add(trayPause);
+        trayQuick.Click += (_, _) => ShowTrayQuickPanel();
         trayMenu.Items.Add("Licencias", null, (_, _) => ShowLicenses());
         trayMenu.Items.Add("Salir", null, (_, _) => Close());
+        trayMenu.Items.Insert(1, trayQuick);
         tray.DoubleClick += (_, _) => RestoreWindow();
         UpdateSharingControls();
 
@@ -92,11 +97,11 @@ internal sealed partial class MainForm : Form
         locate.Click += (_, _) => LocateGame();
         launch.Click += (_, _) => OpenExternal("steam://rungameid/227300");
         settingsButton.Click += (_, _) => ShowSettings();
-        updateButton.Click += (_, _) => { if (updateUrl is not null) OpenExternal(updateUrl); };
         ApplyCompactSize();
         ApplyLanguage();
-        ApplyTheme();
         ConfigurePanels();
+        Restyle(this);
+        ScaleText(this);
         Shown += (_, _) => Start();
         FormClosed += (_, _) =>
         {
@@ -107,6 +112,8 @@ internal sealed partial class MainForm : Form
             trayMenu.Dispose();
             journal.Flush();
             recording?.Dispose();
+            captureWindow?.Close();
+            quickWindow?.Close();
             appIcon.Dispose();
             lifetime.Dispose();
         };
@@ -127,6 +134,12 @@ internal sealed partial class MainForm : Form
         DiscoverGame();
         RefreshPresence();
         timer.Start();
+        if (!retentionChecked)
+        {
+            retentionChecked = true;
+            try { LocalData.PruneRecordings(preferences.RetentionDays, recordingPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
 
         try
         {
@@ -134,8 +147,7 @@ internal sealed partial class MainForm : Form
             if (release is { } found && !IsDisposed)
             {
                 updateUrl = found.Url;
-                Translate(updateButton, $"↓ Descargar v{found.Version}", $"↓ Download v{found.Version}");
-                updateButton.Visible = true;
+                updateVersion = found.Version;
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
@@ -208,10 +220,16 @@ internal sealed partial class MainForm : Form
 
     private void SavePreferences(AppSettings updated)
     {
-        preferences = updated;
         try
         {
-            preferences.Save();
+            updated.Save();
+            if (!string.Equals(preferences.DriverProfile, updated.DriverProfile, StringComparison.OrdinalIgnoreCase))
+            {
+                journal.Flush();
+                journal = new TripJournal(LocalData.JournalPath(updated.DriverProfile));
+                completedTrip = null;
+            }
+            preferences = updated;
             settingsError = null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -241,14 +259,19 @@ internal sealed partial class MainForm : Form
             discordWasReady ? L("Discord · Reconectando…", "Discord · Reconnecting…") : L("Discord · Esperando la app de escritorio", "Discord · Waiting for desktop app"), ready);
 
         var now = Environment.TickCount64;
-        ApplyTheme();
         var running = IsGameRunning();
         if (!running) restartNeeded = false;
         if (now >= nextGameCheck && (!gamePrepared || !SteamLocator.IsValidGamePath(gamePath))) DiscoverGame();
 
         TelemetrySnapshot? telemetry = null;
         string? readError = null;
-        if (running && !preferences.ReaderDisabled) TelemetryReader.TryRead(out telemetry, out readError);
+        if (running && !preferences.ReaderDisabled)
+        {
+            TelemetryReader.TryRead(out telemetry, out readError, out var detectedRevision);
+            if (detectedRevision.HasValue) lastRevision = detectedRevision;
+        }
+        else lastRevision = null;
+        readerError = readError;
         var frozen = telemetry is not null && !IsFresh(telemetry, now);
         if (frozen) telemetry = null;
         if (telemetry is null) ResetLocation(running);
@@ -267,23 +290,34 @@ internal sealed partial class MainForm : Form
             try { TelemetryReplay.Write(recording, new RecordedFrame(now - recordingStarted, telemetry)); }
             catch (Exception ex) when (ex is IOException or ArgumentException)
             {
-                recording.Dispose();
+                try { recording.Dispose(); } catch (IOException) { }
                 recording = null;
+                recordingPath = null;
                 settingsError = L("No se pudo guardar la grabación.", "The recording could not be saved.");
             }
         }
         var ending = journal.Observe(telemetry, DateTimeOffset.UtcNow, now);
         if (ending is not null) completedTrip = ending;
         else if (telemetry?.OnJob == true) completedTrip = null;
-        var simulated = demo || playback is not null;
-        var trip = playback is not null ? PlaybackTrip(now) : demo ? Sample : telemetry;
-        var displayedCity = playback is not null && trip is not null ? cities.FindNearby(trip.X, trip.Z)
-            : demo ? "Chambéry" : nearby;
-        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, preferences);
+        var simulated = demo || replayOpen;
+        var trip = demo ? Sample : telemetry;
+        var displayedCity = demo ? "Chambéry" : nearby;
+        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, privateDestination
+            ? preferences with { ShowRoute = false, ShowCity = false } : preferences);
+        UpdateActivity(telemetry);
+        if (presence is not null)
+            presence = presence with
+            {
+                Started = preferences.ActivityTimer ? activityStarted : null,
+                Image = preferences.ActivityImage ? DiscordIdentity.ActivityImage : null,
+                Badge = preferences.ActivityImage && trip is not null
+                    ? DiscordIdentity.ActivityBadge(trip.Paused ? "paused" : trip.OnJob ? "delivery" : "roam") : null
+            };
         RenderTrip(trip, displayedCity, presence);
         RenderExtras(trip, now, running, ready);
+        RenderTools(trip, telemetry, ready);
         tripMap.UpdateMap(trip, cities, English, isLight, demo);
-        guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (playback is not null ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
+        guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
             : demo ? L("Demostración local. El viaje de ejemplo no se publica.", "Local demo. The sample trip stays local.")
             : !preferences.Sharing ? L("La publicación está pausada. Puedes reanudarla desde este panel o la bandeja.", "Publishing is paused. Resume here or from the tray.")
             : telemetry is not null ? (ready ? L("Actividad preparada para Discord.", "Activity ready for Discord.") : L("Abre Discord de escritorio para compartir tu viaje.", "Open Discord desktop to share your trip."))
@@ -328,53 +362,54 @@ internal sealed partial class MainForm : Form
     {
         if (!publication.ShouldSend(presence, Volatile.Read(ref connectionGeneration))) return;
         if (presence is null) discord.ClearPresence();
-        else discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
+        else discord.SetPresence(new RichPresence
+        {
+            Details = presence.Details, State = presence.State,
+            Assets = presence.Image is { } image ? new Assets
+            {
+                LargeImageKey = image, LargeImageText = "Euro Truck Simulator 2", SmallImageKey = presence.Badge
+            } : null,
+            Timestamps = presence.Started is { } start ? new Timestamps { Start = start } : null
+        });
     }
 
-    private TelemetrySnapshot? PlaybackTrip(long now)
+    private void UpdateActivity(TelemetrySnapshot? trip)
     {
-        var frames = playback!;
-        while (playbackIndex + 1 < frames.Count && frames[playbackIndex + 1].ElapsedMs <= now - playbackStarted)
-            playbackIndex++;
-        return frames[playbackIndex].Trip;
+        var key = trip is null ? null : trip.OnJob
+            ? $"job|{trip.Signals?.Deadline}|{trip.Signals?.JobKey}|{trip.DestinationCity}" : "free";
+        if (key == activityKey) return;
+        activityKey = key;
+        activityStarted = key is null ? null : DateTime.UtcNow;
     }
 
     private void ToggleRecording(IWin32Window owner)
     {
         if (recording is not null)
         {
-            recording.Dispose();
+            if (!DataAction(owner, recording.Dispose)) return;
             recording = null;
+            recordingPath = null;
             MessageBox.Show(owner, L("Grabación guardada.", "Recording saved."), Text);
             return;
         }
-        using var picker = new SaveFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl", FileName = "ets2-trip.jsonl" };
-        if (picker.ShowDialog(owner) != DialogResult.OK) return;
+        if (demo || replayOpen)
+        {
+            MessageBox.Show(owner, L("Sal de la demostración o reproducción antes de grabar.", "Exit demo or replay before recording."), Text);
+            return;
+        }
         try
         {
-            recording = new StreamWriter(picker.FileName);
+            Directory.CreateDirectory(LocalData.Recordings);
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var file = Path.Combine(LocalData.Recordings, $"ETS2-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}-{suffix}.jsonl");
+            recording = new StreamWriter(new FileStream(file, FileMode.CreateNew));
+            recordingPath = file;
             recordingStarted = Environment.TickCount64;
+            RefreshPresence();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             MessageBox.Show(owner, L("No se pudo abrir el archivo.", "Could not open the file."), Text);
-        }
-    }
-
-    private void OpenPlayback(IWin32Window owner)
-    {
-        using var picker = new OpenFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl" };
-        if (picker.ShowDialog(owner) != DialogResult.OK) return;
-        try
-        {
-            playback = TelemetryReplay.Read(picker.FileName);
-            playbackStarted = Environment.TickCount64;
-            playbackIndex = 0;
-            RefreshPresence();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
-        {
-            MessageBox.Show(owner, L("Grabación inválida o demasiado grande.", "Invalid or oversized recording."), Text);
         }
     }
 

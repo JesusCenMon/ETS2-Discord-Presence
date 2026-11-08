@@ -19,19 +19,23 @@ Puedes minimizar la aplicación y recuperarla desde el icono junto al reloj. Si 
 - En pausa: indica que el juego está en pausa.
 - El panel muestra la llegada estimada según el reloj de ETS2 y el progreso cuando el juego facilita una ruta y una distancia planificada. Un cambio de destino en el navegador del juego puede cambiar la estimación.
 
-En **Ajustes** puedes ordenar los datos de Discord y previsualizarlos, guardar un perfil de publicación, elegir el idioma del panel y de la actividad por separado y cambiar el tema. También puedes ordenar los paneles, elegir cuáles mostrar y activar la vista compacta. **Segundo monitor** mueve el panel a otra pantalla si hay una disponible. Usa Escape para volver a la ventana.
+En **Ajustes** puedes ordenar los datos de Discord y previsualizarlos, guardar un perfil de publicación, elegir el idioma del panel y de la actividad por separado y cambiar el tema. También puedes ordenar los paneles, elegir cuáles mostrar y activar la vista compacta. **Más opciones → Segundo monitor** mueve el panel a otra pantalla si hay una disponible. Usa Escape para volver a la ventana. Puedes ajustar el tamaño del texto por separado. Vuelve a abrir la app después de cambiar el tema.
 
-El mapa muestra posiciones aproximadas, el destino y el recorrido observado durante la sesión. Puedes importar un catálogo de mapas modificados en **Ajustes → Juego**. El JSON debe contener una lista `citiesList` con los campos `realName`, `x` y `z`. El campo opcional `gameName` permite localizar destinos por su identificador de ETS2.
+El mapa muestra posiciones aproximadas, el destino y el recorrido observado durante la sesión. Arrastra o usa las flechas para moverlo. Usa la rueda o los botones para acercar y alejar, y pulsa «Centrar» para volver a la vista inicial. Puedes importar un catálogo de mapas modificados en **Ajustes → Juego**. El JSON debe contener una lista `citiesList` con los campos `realName`, `x` y `z`. El campo opcional `gameName` permite localizar destinos por su identificador de ETS2.
 
-**Historial** reúne las entregas y cancelaciones detectadas. Guarda los datos en este equipo, permite filtrar por ciudad o fechas y exporta el resultado a CSV. Las horas al volante se calculan a partir de las muestras observadas y las etapas de recogida, llegada y descanso pueden ser aproximadas.
+**Diario** reúne las entregas y cancelaciones detectadas. Elige o crea un conductor para guardar sus viajes por separado. Busca por ciudad, carga, etiqueta o nota, marca favoritos y exporta el resultado a CSV. Usa Ctrl para seleccionar dos filas y compararlas. El calendario resume kilómetros, entregas y tiempo al volante por semana. Las horas al volante se calculan a partir de las muestras observadas.
 
-En **Ajustes → Juego** puedes grabar telemetría local y reproducir un archivo JSONL. La reproducción se muestra en el panel sin publicar actividad en Discord. El mismo menú permite reparar o retirar el lector con ETS2 cerrado.
+**Repeticiones** permite grabar y borrar viajes locales o abrir un archivo JSONL anterior. Usa la línea de tiempo o el gráfico de velocidad para avanzar o retroceder. Puedes cambiar la velocidad y saltar a los eventos de recogida, ferry o entrega que se hayan detectado. Durante la reproducción se pausa la publicación en Discord.
 
-La pausa se guarda y también se controla desde la bandeja de Windows. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
+En **Ajustes → Juego** puedes comprobar la versión y compatibilidad del lector por separado, repararlo o retirarlo con ETS2 cerrado, y activar avisos de combustible bajo. Los datos del camión aparecen cuando el juego los facilita.
 
-Al abrir la app se comprueba si hay una versión más reciente en GitHub. El botón de actualización abre la descarga del ejecutable.
+En **Ajustes → Datos locales** puedes crear o restaurar una copia de los diarios, ajustes y catálogos. Las grabaciones se gestionan por separado y puedes elegir cuánto tiempo conservarlas. El modo portátil usa la carpeta `ETS2PresenceData` junto al ejecutable a partir del siguiente inicio. Para llevar el diario a la otra carpeta, exporta una copia y restáurala después de volver a abrir la app.
 
-La actividad aparece como **ETS2 Presence** en Discord. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
+La pausa se guarda y también se controla desde la bandeja de Windows. «Ver viaje rápido» muestra el destino, la distancia y el estado de Discord. En **Ajustes → Privacidad** puedes elegir un atajo que oculta temporalmente la ruta y la ciudad en Discord. En **Más opciones → Tarjeta OBS** se abre una ventana independiente con la ruta y distancia. Puedes capturar esa ventana en OBS y aplicar un filtro de clave de color magenta si el método de captura muestra el borde transparente como un color sólido. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
+
+Al abrir la app se comprueba si hay una versión más reciente en GitHub. Cuando hay una actualización, aparece la descarga en **Más opciones**.
+
+La actividad aparece como **ETS2 Presence** en Discord. La imagen cambia su indicador según estés haciendo una entrega, explorando o en pausa, y el temporizador cuenta desde que se detecta la actividad. Ambos se pueden desactivar desde **Ajustes → Discord**. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
 
 ## Problemas frecuentes
 

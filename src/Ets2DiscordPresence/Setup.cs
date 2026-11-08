@@ -10,18 +10,18 @@ internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bo
     bool RouteFirst = false, bool Compact = false, string Language = "es", string DiscordLanguage = "es",
     string Theme = "system", bool GuideDismissed = false, bool ReaderDisabled = false,
     string? CityCatalog = null, string Profile = "custom", string[]? PresenceOrder = null,
-    string[]? PanelOrder = null, string[]? HiddenPanels = null)
+    string[]? PanelOrder = null, string[]? HiddenPanels = null,
+    string DriverProfile = "", string[]? Drivers = null, int TextPercent = 100, int RetentionDays = 0,
+    int FuelThreshold = 0, int PrivacyShortcut = 0, bool ActivityImage = true, bool ActivityTimer = true, bool ShowArtwork = false)
 {
-    private static readonly string SettingsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ETS2DiscordPresence", "settings.json");
+    private static string SettingsPath => Path.Combine(LocalData.Folder, "settings.json");
 
     public static AppSettings Load()
     {
         try
         {
             return File.Exists(SettingsPath)
-                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new("")
+                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) is { DriverProfile: not null } saved ? saved with { DriverProfile = saved.DriverProfile.Trim() } : new("")
                 : new("");
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(""); }
@@ -73,6 +73,7 @@ internal static class SteamLocator
 
 internal static class PluginInstaller
 {
+    internal const string BundledVersion = "1.12.1";
     private const string InstalledName = "ets2-discord-telemetry.dll";
 
     public static void Maintain(string gamePath, bool remove)

@@ -7,7 +7,7 @@ internal sealed record TelemetrySnapshot(
     bool Paused, bool OnJob, string Cargo, string SourceCity, string DestinationCity,
     double X, double Z, float RouteDistanceMeters, uint PluginRevision,
     ulong RenderTime = 0, uint GameMinutes = 0, float RouteSeconds = 0, uint PlannedDistanceKm = 0,
-    TripSignals? Signals = null)
+    TripSignals? Signals = null, TruckInfo? Truck = null)
 {
     public double? RemainingKm => float.IsFinite(RouteDistanceMeters) && RouteDistanceMeters > 0
         ? RouteDistanceMeters / 1000d : null;
@@ -21,6 +21,12 @@ internal sealed record TelemetrySnapshot(
         : null;
 }
 
+internal sealed record TruckInfo(string Brand, string Model, float? Litres, float? Capacity)
+{
+    public double? FuelPercent => Capacity is > 0 && Litres is >= 0 && Litres <= Capacity
+        ? 100d * Litres.Value / Capacity.Value : null;
+}
+
 internal sealed record TripSignals(uint Deadline, uint FinishedAt, bool Delivered, bool Cancelled,
     bool Loaded, bool Ferry, bool Refueling, bool ParkBrake, float Speed, float Odometer,
     int RestMinutes, float DeliveredKm, string JobKey, string DestinationId = "");
@@ -29,10 +35,11 @@ internal static class TelemetryReader
 {
     private const string MapName = @"Local\SCSTelemetry";
     private const int MinimumBytes = 4400;
-    private const uint ExpectedRevision = 12; // RenCloud scs-sdk-plugin V.1.12.1
+    internal const uint ExpectedRevision = 12; // RenCloud scs-sdk-plugin V.1.12.1
 
-    public static bool TryRead(out TelemetrySnapshot? snapshot, out string? error)
+    public static bool TryRead(out TelemetrySnapshot? snapshot, out string? error, out uint? detectedRevision)
     {
+        detectedRevision = null;
         snapshot = null;
         error = null;
         try
@@ -48,6 +55,7 @@ internal static class TelemetryReader
                 var after = view.ReadUInt64(24);
                 if (before == after || attempt == 2)
                 {
+                    if (bytes[0] != 0) detectedRevision = BitConverter.ToUInt32(bytes.AsSpan(40, 4));
                     snapshot = Parse(bytes);
                     break;
                 }
@@ -103,7 +111,15 @@ internal static class TelemetryReader
                 DeliveredKm: BitConverter.ToSingle(data.Slice(1460, 4)),
                 JobKey: string.Join("|", ReadString(data, 2556, 64), ReadString(data, 2940, 64),
                     ReadString(data, 3068, 64), ReadString(data, 2684, 64), ReadString(data, 2812, 64)),
-                DestinationId: ReadString(data, 2684, 64)));
+                DestinationId: ReadString(data, 2684, 64)),
+            Truck: new TruckInfo(ReadString(data, 2364, 64), ReadString(data, 2492, 64),
+                FiniteFloat(data, 1000), FiniteFloat(data, 704)));
+    }
+
+    private static float? FiniteFloat(ReadOnlySpan<byte> data, int offset)
+    {
+        var value = BitConverter.ToSingle(data.Slice(offset, 4));
+        return float.IsFinite(value) ? value : null;
     }
 
     private static string ReadString(ReadOnlySpan<byte> data, int offset, int length)

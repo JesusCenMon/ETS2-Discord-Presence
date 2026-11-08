@@ -4,32 +4,48 @@ internal sealed partial class MainForm
 {
     private void ShowHistory()
     {
-        using var window = new Form
-        {
-            Text = L("Diario de entregas", "Delivery journal"), ClientSize = new Size(950, 565),
-            MinimumSize = new Size(550, 390), StartPosition = FormStartPosition.CenterParent,
-            BackColor = Themed(Background), ForeColor = Themed(Foreground)
-        };
+        using var window = ToolWindow(L("Diario de entregas", "Delivery journal"), new Size(980, 590));
         var header = Grid(1);
         header.Padding = new Padding(14, 12, 14, 6);
         var filters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true };
-        var cityFilter = new TextBox { Width = 160, PlaceholderText = L("Filtrar por ciudad", "Filter by city"), AccessibleName = L("Ciudad", "City") };
+        var cityFilter = new TextBox { Width = 160, PlaceholderText = L("Ciudad, carga o etiqueta", "City, cargo or tag"), AccessibleName = L("Buscar en el diario", "Search the journal") };
         var from = new DateTimePicker { ShowCheckBox = true, Checked = false, Format = DateTimePickerFormat.Short, Width = 123, AccessibleName = L("Desde", "From") };
         var to = new DateTimePicker { ShowCheckBox = true, Checked = false, Format = DateTimePickerFormat.Short, Width = 123, AccessibleName = L("Hasta", "To") };
         var export = MakeButton(L("Exportar CSV", "Export CSV"));
+        var favorites = new CheckBox { Text = L("Solo favoritos", "Favorites only"), AutoSize = true };
+        var tools = ToolBar();
+        var driver = new ComboBox { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = L("Conductor", "Driver") };
+        var addDriver = MakeButton(L("Añadir conductor", "Add driver"));
+        var calendar = MakeButton(L("Calendario", "Calendar"));
+        var compare = MakeButton(L("Comparar dos viajes", "Compare two trips"));
+        var notes = MakeButton(L("Notas y favorito", "Notes and favorite"));
+        var remove = MakeButton(L("Eliminar viaje", "Delete trip"));
+        compare.AccessibleDescription = L("Selecciona dos filas con Ctrl para comparar.", "Select two rows with Ctrl to compare.");
+        tools.Controls.AddRange([driver, addDriver, calendar, compare, notes, remove]);
+        void ListDrivers()
+        {
+            driver.Items.Clear();
+            driver.Items.Add(new DriverOption("", L("Conductor principal", "Main driver")));
+            foreach (var name in (preferences.Drivers ?? []).Append(preferences.DriverProfile)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase))
+                driver.Items.Add(new DriverOption(name, name));
+            driver.SelectedItem = driver.Items.OfType<DriverOption>().First(option =>
+                string.Equals(option.Key, preferences.DriverProfile, StringComparison.OrdinalIgnoreCase));
+        }
+        ListDrivers();
         filters.Controls.AddRange([cityFilter, new Label { Text = L("Desde", "From"), AutoSize = true }, from,
-            new Label { Text = L("Hasta", "To"), AutoSize = true }, to, export]);
+            new Label { Text = L("Hasta", "To"), AutoSize = true }, to, favorites, export]);
         var stats = TextLabel("", 11, true);
-        AddRows(header, TextLabel(L("Tus viajes registrados", "Your recorded trips"), 18, true), stats, filters);
+        AddRows(header, TextLabel(L("Tus viajes registrados", "Your recorded trips"), 18, true), stats, tools, filters);
 
         var history = new DataGridView
         {
             Dock = DockStyle.Fill, ReadOnly = true, RowHeadersVisible = false, AllowUserToAddRows = false,
-            AllowUserToDeleteRows = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            BackgroundColor = Themed(Surface), BorderStyle = BorderStyle.None, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            AllowUserToDeleteRows = false, MultiSelect = true, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            BackgroundColor = Surface, BorderStyle = BorderStyle.None, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
         };
-        history.DefaultCellStyle.BackColor = Themed(Surface);
-        history.DefaultCellStyle.ForeColor = Themed(Foreground);
+        history.DefaultCellStyle.BackColor = Surface;
+        history.DefaultCellStyle.ForeColor = Foreground;
         history.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         history.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
         foreach (var (key, label, size) in new[]
@@ -49,13 +65,17 @@ internal sealed partial class MainForm
             entries = journal.Entries.Where(entry => entry.Finished is { } finish
                 && (!from.Checked || finish.LocalDateTime.Date >= from.Value.Date)
                 && (!to.Checked || finish.LocalDateTime.Date <= to.Value.Date)
-                && (entry.Origin.Contains(search, StringComparison.CurrentCultureIgnoreCase)
-                    || entry.Destination.Contains(search, StringComparison.CurrentCultureIgnoreCase)))
+                && (!favorites.Checked || entry.Favorite)
+                && new[] { entry.Origin, entry.Destination, entry.Cargo, entry.Tags, entry.Notes }
+                    .Any(value => value?.Contains(search, StringComparison.CurrentCultureIgnoreCase) == true))
                 .OrderByDescending(entry => entry.Finished).ToArray();
             history.Rows.Clear();
             foreach (var entry in entries)
-                history.Rows.Add(entry.Finished?.ToLocalTime().ToString("g") ?? "", entry.Origin, entry.Destination,
-                    entry.Cargo, Result(entry), $"{entry.Km:N1}", FormatDriving(entry.DrivingSeconds));
+            {
+                var row = history.Rows.Add((entry.Favorite ? "★ " : "") + entry.Finished?.ToLocalTime().ToString("g"),
+                    entry.Origin, entry.Destination, entry.Cargo, Result(entry), $"{entry.Km:N1}", FormatDriving(entry.DrivingSeconds));
+                history.Rows[row].Tag = entry;
+            }
             var completed = entries.Where(entry => entry.Result == "delivered").ToArray();
             var topRoute = completed.GroupBy(entry => $"{entry.Origin} → {entry.Destination}")
                 .OrderByDescending(group => group.Count()).FirstOrDefault()?.Key;
@@ -64,13 +84,55 @@ internal sealed partial class MainForm
                     + $"{entries.Sum(entry => entry.Km):N1} km  ·  {FormatDriving(entries.Sum(entry => entry.DrivingSeconds))} {L("al volante", "driving")}"
                     + (topRoute is null ? "" : $"\n{L("Ruta más frecuente", "Most frequent route")} · {topRoute}");
             export.Enabled = entries.Length > 0;
+            UpdateActions();
         }
+        TripEntry[] Selection() => history.SelectedRows.Cast<DataGridViewRow>().OrderBy(row => row.Index)
+            .Select(row => row.Tag).OfType<TripEntry>().ToArray();
+        void UpdateActions()
+        {
+            var count = Selection().Length;
+            notes.Enabled = remove.Enabled = count == 1;
+            compare.Enabled = count == 2;
+        }
+        history.SelectionChanged += (_, _) => UpdateActions();
+        favorites.CheckedChanged += (_, _) => RefreshHistory();
+        driver.SelectionChangeCommitted += (_, _) =>
+        {
+            if (driver.SelectedItem is DriverOption option)
+                SwitchDriver(option.Key, preferences.Drivers ?? [], window);
+            ListDrivers();
+            RefreshHistory();
+        };
+        addDriver.Click += (_, _) =>
+        {
+            var name = AskDriverName(window);
+            if (name is null) return;
+            SwitchDriver(name, (preferences.Drivers ?? []).Append(name).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), window);
+            ListDrivers();
+            RefreshHistory();
+        };
+        calendar.Click += (_, _) => ShowWeek(window);
+        compare.Click += (_, _) =>
+        {
+            if (Selection() is [var first, var second]) CompareTrips(first, second, window);
+        };
+        notes.Click += (_, _) =>
+        {
+            if (Selection() is [var entry] && EditTripNotes(entry, window)) RefreshHistory();
+        };
+        remove.Click += (_, _) =>
+        {
+            if (Selection() is not [var entry] || !Confirm(window, L("¿Eliminar este viaje del diario?", "Delete this trip from the journal?"))) return;
+            if (!journal.Remove(entry.Id)) MessageBox.Show(window, L("No se pudo guardar el diario.", "Could not save the journal."), Text);
+            if (completedTrip?.Id == entry.Id) completedTrip = null;
+            RefreshHistory();
+        };
         cityFilter.TextChanged += (_, _) => RefreshHistory();
         from.ValueChanged += (_, _) => RefreshHistory();
         to.ValueChanged += (_, _) => RefreshHistory();
         history.CellDoubleClick += (_, e) =>
         {
-            if (e.RowIndex >= 0 && e.RowIndex < entries.Length) ShowSummary(entries[e.RowIndex], window);
+            if (e.RowIndex >= 0 && history.Rows[e.RowIndex].Tag is TripEntry entry) ShowSummary(entry, window);
         };
         export.Click += (_, _) =>
         {
@@ -84,7 +146,7 @@ internal sealed partial class MainForm
         };
         window.Controls.Add(history);
         window.Controls.Add(header);
-        Restyle(window);
+        StyleTool(window);
         RefreshHistory();
         window.ShowDialog(this);
     }
@@ -108,13 +170,13 @@ internal sealed partial class MainForm
         var content = Grid(1);
         content.Padding = new Padding(20);
         var title = TextLabel(Result(entry), 19, true);
-        title.ForeColor = Mint;
+        title.ForeColor = Accent;
         AddRows(content, title, TextLabel($"{entry.Origin}  →  {entry.Destination}", 15, true),
             TextLabel(entry.Cargo, 12), TextLabel($"{entry.Km:N1} km  ·  {FormatDriving(entry.DrivingSeconds)} {L("al volante", "driving")}", 12),
             TextLabel(entry.Finished?.ToLocalTime().ToString("g") ?? "", 10));
         AddAction(content, L("Cerrar", "Close"), window.Close);
         window.Controls.Add(content);
-        Restyle(window);
+        StyleTool(window);
         window.ShowDialog(owner);
     }
 }

@@ -13,7 +13,17 @@ internal static class Program
             return;
         }
 
-        ApplicationConfiguration.Initialize();
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        using var font = new Font("Segoe UI", 9);
+        Application.SetDefaultFont(font);
+        Application.SetColorMode(AppSettings.Load().Theme switch
+        {
+            "day" => SystemColorMode.Classic,
+            "night" when OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) => SystemColorMode.Dark,
+            _ => SystemColorMode.System
+        });
         using var window = new MainForm(args.Contains("--minimized"));
         _ = window.Handle;
         var activation = ThreadPool.RegisterWaitForSingleObject(signal, (_, _) =>

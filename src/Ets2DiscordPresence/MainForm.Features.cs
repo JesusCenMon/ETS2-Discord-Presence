@@ -1,5 +1,3 @@
-using Microsoft.Win32;
-
 namespace Ets2DiscordPresence;
 
 internal sealed partial class MainForm
@@ -9,9 +7,7 @@ internal sealed partial class MainForm
     private readonly Label deadlineAlert = TextLabel("", 10, true);
     private readonly Label onboarding = TextLabel("", 10);
     private readonly Label finishBanner = TextLabel("", 11, true);
-    private readonly Button dismissGuide = MakeButton("Ocultar guía");
     private readonly Button historyButton = MakeButton("Historial");
-    private readonly Button monitorButton = MakeButton("Segundo monitor");
     private readonly Button summaryButton = MakeButton("Ver resumen");
     private readonly TripMap tripMap = new();
     private readonly string[] panelKeys = ["trip", "discord", "map"];
@@ -19,7 +15,6 @@ internal sealed partial class MainForm
     private FormWindowState previousWindowState;
     private Rectangle previousBounds;
     private bool fullScreen;
-    private bool themeApplied;
 
     private bool English => preferences.Language == "en";
     private string L(string es, string en) => English ? en : es;
@@ -39,50 +34,40 @@ internal sealed partial class MainForm
         foreach (var (control, pair) in translations)
             control.Text = L(pair.Es, pair.En);
         trayMenu.Items[0].Text = L("Abrir panel", "Open dashboard");
-        trayMenu.Items[2].Text = L("Licencias", "Licenses");
-        trayMenu.Items[3].Text = L("Salir", "Exit");
-        if (fullScreen) monitorButton.Text = L("Salir de pantalla completa", "Exit full screen");
+        trayQuick.Text = L("Ver viaje rápido", "View quick trip");
+        trayMenu.Items[3].Text = L("Licencias", "Licenses");
+        trayMenu.Items[4].Text = L("Salir", "Exit");
         UpdateSharingControls();
     }
 
-    private void ApplyTheme()
+    private static void Restyle(Control control)
     {
-        var light = preferences.Theme == "day";
-        if (preferences.Theme == "system")
+        switch (control)
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            light = key?.GetValue("AppsUseLightTheme") is int mode && mode != 0;
+            case Panel or Label:
+                control.TabStop = false;
+                break;
+            case ComboBox combo:
+                combo.FlatStyle = FlatStyle.Flat;
+                break;
+            case CheckBox check:
+                check.FlatStyle = FlatStyle.Flat;
+                check.CheckAlign = check.TextAlign = ContentAlignment.MiddleLeft;
+                break;
+            case RadioButton radio:
+                radio.FlatStyle = FlatStyle.Flat;
+                radio.CheckAlign = radio.TextAlign = ContentAlignment.MiddleLeft;
+                break;
         }
-        if (themeApplied && light == isLight) return;
-        themeApplied = true;
-        isLight = light;
-        Restyle(this);
-        Invalidate(true);
-    }
-
-    private Color Themed(Color color)
-    {
-        (Color Dark, Color Light)[] palette =
-        [
-            (Background, Color.FromArgb(238, 245, 247)), (Surface, Color.White),
-            (Foreground, Color.FromArgb(16, 34, 46)), (Muted, Color.FromArgb(43, 65, 75)),
-            (Mint, Color.FromArgb(0, 101, 81)), (Amber, Color.FromArgb(138, 70, 0))
-        ];
-        foreach (var (dark, light) in palette)
-            if (color == dark || color == light) return isLight ? light : dark;
-        return color;
-    }
-
-    private void Restyle(Control control)
-    {
-        control.BackColor = Themed(control.BackColor);
-        control.ForeColor = Themed(control.ForeColor);
-        if (control is Button button)
+        var children = control.Controls.Cast<Control>();
+        if (control is TableLayoutPanel table)
+            children = children.OrderBy(table.GetRow).ThenBy(table.GetColumn);
+        var index = 0;
+        foreach (var child in children)
         {
-            button.FlatAppearance.MouseOverBackColor = isLight
-                ? Color.FromArgb(207, 229, 232) : Color.FromArgb(34, 61, 68);
+            child.TabIndex = index++;
+            Restyle(child);
         }
-        foreach (Control child in control.Controls) Restyle(child);
     }
 
     private string PanelName(string key) => key switch
@@ -115,7 +100,7 @@ internal sealed partial class MainForm
     private void OrderTripPanels()
     {
         var order = OrderPanels(preferences, panelKeys);
-        var rows = new[] { 0, 5, 6 };
+        var rows = new[] { 0, 4, 5 };
         tripPanel.SuspendLayout();
         for (var index = 0; index < order.Length; index++)
         {
@@ -123,11 +108,12 @@ internal sealed partial class MainForm
                 tripPanel.SetRow(panelSections[order[index]], rows[index]);
         }
         tripPanel.ResumeLayout(true);
+        Restyle(tripPanel);
     }
 
     private void RenderExtras(TelemetrySnapshot? trip, long now, bool running, bool ready)
     {
-        onboarding.Visible = dismissGuide.Visible = !preferences.GuideDismissed && !fullScreen;
+        onboarding.Visible = !preferences.GuideDismissed && !fullScreen;
         onboarding.Text = $"{L("Primera conexión", "First connection")}\n"
             + $"1  {(gamePrepared ? "✓" : "○")}  {L("Lector del juego", "Game reader")}   "
             + $"2  {(ready ? "✓" : "○")}  Discord   "
@@ -157,7 +143,7 @@ internal sealed partial class MainForm
         timeline.Visible = (stage >= 0 || manoeuvre is not null) && preferences.HiddenPanels?.Contains("timeline") != true;
         timeline.Text = string.Join(Environment.NewLine, new[] { stage >= 0 ? steps : null, manoeuvre,
             journal.Recovered && stage >= 0 && !demo ? L("Viaje recuperado del diario", "Trip resumed from the journal") : null }.OfType<string>());
-        summaryButton.Visible = finishBanner.Visible = completedTrip is not null && !demo && playback is null;
+        summaryButton.Visible = finishBanner.Visible = completedTrip is not null && !demo && !replayOpen;
         if (completedTrip is { } completed)
             finishBanner.Text = $"{Result(completed)} · {completed.Origin} → {completed.Destination} · {completed.Km:N1} km · {FormatDriving(completed.DrivingSeconds)}";
         deadlineAlert.Visible = false;
@@ -168,7 +154,7 @@ internal sealed partial class MainForm
             if (margin <= 30)
             {
                 deadlineAlert.Visible = true;
-                deadlineAlert.ForeColor = Themed(Amber);
+                deadlineAlert.ForeColor = Foreground;
                 deadlineAlert.Text = margin < 0 ? L("La llegada estimada supera el plazo.", "Estimated arrival exceeds the deadline.")
                     : L($"Margen antes del plazo: {margin} min del juego.", $"Time before deadline: {margin} in-game min.");
             }
@@ -196,9 +182,7 @@ internal sealed partial class MainForm
             FormBorderStyle = FormBorderStyle.None;
             Bounds = target.Bounds;
         }
-        cargo.Font = new Font("Segoe UI", fullScreen ? 34 : 21, FontStyle.Bold);
-        distance.Font = new Font("Segoe UI", fullScreen ? 42 : 23, FontStyle.Bold);
-        monitorButton.Text = fullScreen ? L("Salir de pantalla completa", "Exit full screen") : L("Segundo monitor", "Second monitor");
+        ScaleText(this);
         ConfigurePanels();
         RefreshPresence();
     }

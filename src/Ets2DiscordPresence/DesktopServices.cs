@@ -33,6 +33,19 @@ internal static class DesktopServices
     public static void Open(string uri) =>
         Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true })?.Dispose();
 
+    public static async Task<Version> CheckReaderVersionAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/RenCloud/scs-sdk-plugin/releases/latest");
+        request.Headers.UserAgent.ParseAdd("ETS2DiscordPresence");
+        using var response = await Client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+        if (!document.RootElement.TryGetProperty("tag_name", out var tag)
+            || !System.Version.TryParse(tag.GetString()?.TrimStart('v', 'V', '.', ' '), out var version))
+            throw new FormatException("Invalid reader version.");
+        return version;
+    }
+
     public static async Task<(Version Version, string Url)?> CheckForUpdateAsync(CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases?per_page=20");

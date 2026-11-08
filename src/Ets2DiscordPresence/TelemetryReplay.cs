@@ -25,6 +25,40 @@ internal static class TelemetryReplay
         return frames;
     }
 
+    public static int IndexAt(IReadOnlyList<RecordedFrame> frames, long elapsed)
+    {
+        var lower = 0;
+        var upper = frames.Count;
+        while (lower < upper)
+        {
+            var middle = (lower + upper) / 2;
+            if (frames[middle].ElapsedMs <= elapsed) lower = middle + 1;
+            else upper = middle;
+        }
+        return lower - 1;
+    }
+
+    public static IEnumerable<(long Elapsed, string Kind)> Milestones(IReadOnlyList<RecordedFrame> frames)
+    {
+        TelemetrySnapshot? previous = null;
+        foreach (var frame in frames)
+        {
+            if (frame.Trip is { Signals: { } signals } trip)
+            {
+                var old = previous?.Signals;
+                if (trip.OnJob && signals.Loaded && (previous?.OnJob != true || old?.Loaded != true))
+                    yield return (frame.ElapsedMs, "pickup");
+                if (old is not null && signals.Ferry != old.Ferry)
+                    yield return (frame.ElapsedMs, "ferry");
+                if (old is not null && signals.FinishedAt != 0
+                    && (signals.FinishedAt != old.FinishedAt || signals.Delivered != old.Delivered)
+                    && signals.Delivered != old.Delivered)
+                    yield return (frame.ElapsedMs, "delivery");
+            }
+            previous = frame.Trip;
+        }
+    }
+
     public static void Write(TextWriter file, RecordedFrame frame)
     {
         file.WriteLine(JsonSerializer.Serialize(frame));

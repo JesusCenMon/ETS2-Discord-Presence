@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace Ets2DiscordPresence;
 
-internal sealed record PresenceText(string Details, string State);
+internal sealed record PresenceText(string Details, string State, DateTime? Started = null, string? Image = null, string? Badge = null);
 internal sealed record MapCity(string Name, double X, double Z, string? Id);
 
 internal sealed class CityLookup

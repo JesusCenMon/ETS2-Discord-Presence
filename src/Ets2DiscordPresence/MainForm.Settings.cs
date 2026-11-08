@@ -4,13 +4,9 @@ internal sealed partial class MainForm
 {
     private void ShowSettings()
     {
-        using var window = new Form
-        {
-            Text = L("Ajustes", "Settings"), ClientSize = new Size(710, 535), MinimumSize = new Size(510, 430),
-            StartPosition = FormStartPosition.CenterParent, BackColor = Themed(Background), ForeColor = Themed(Foreground)
-        };
+        using var window = ToolWindow(L("Ajustes", "Settings"), new Size(740, 560));
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 54, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10, 5, 10, 5) };
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
         var apply = MakeButton(L("Guardar cambios", "Save changes"));
         var cancel = MakeButton(L("Cancelar", "Cancel"));
         cancel.DialogResult = DialogResult.Cancel;
@@ -24,6 +20,28 @@ internal sealed partial class MainForm
         var privacy = AddTab(tabs, L("Privacidad", "Privacy"));
         var game = AddTab(tabs, L("Juego", "Game"));
         var style = AddTab(tabs, L("Apariencia", "Appearance"));
+        var data = AddTab(tabs, L("Datos locales", "Local data"));
+        int[] textSizes = [85, 100, 115, 135];
+        var textSize = Choice(style, L("Tamaño del texto", "Text size"), textSizes.Select(value => $"{value}%").ToArray(),
+            Math.Max(0, Array.IndexOf(textSizes, preferences.TextPercent)));
+        var shortcuts = Choice(privacy, L("Atajo global para ocultar el destino", "Global shortcut to hide the destination"),
+            [L("Desactivado", "Off"), "Ctrl + Alt + F8", "Ctrl + Alt + F9", "Ctrl + Alt + F10"], Math.Clamp(preferences.PrivacyShortcut, 0, 3));
+        var image = Check(discordTab, L("Mostrar imagen del juego", "Show game artwork"), preferences.ActivityImage);
+        var activityTimer = Check(discordTab, L("Mostrar tiempo transcurrido", "Show elapsed time"), preferences.ActivityTimer);
+        int[] thresholds = [0, 10, 15, 20, 25, 30, 40];
+        var fuel = Choice(game, L("Aviso de combustible al llegar a", "Fuel alert at"),
+            thresholds.Select(value => value == 0 ? L("Desactivado", "Off") : $"{value}%").ToArray(),
+            Math.Max(0, Array.IndexOf(thresholds, preferences.FuelThreshold)));
+        int[] retentionValues = [0, 7, 30, 90];
+        var retention = Choice(data, L("Conservar grabaciones locales", "Keep local recordings"),
+            retentionValues.Select(value => value == 0 ? L("Siempre", "Forever") : L($"{value} días", $"{value} days")).ToArray(),
+            Math.Max(0, Array.IndexOf(retentionValues, preferences.RetentionDays)));
+        AddRows(data, TextLabel(LocalData.IsPortable ? L("Datos junto al ejecutable", "Data beside the executable")
+            : L("Datos en el perfil de Windows", "Data in the Windows profile"), 10, true));
+        AddAction(data, LocalData.IsPortable ? L("Volver a guardar en Windows…", "Use the Windows profile…")
+            : L("Activar modo portátil…", "Enable portable mode…"), () => ChangeStorage(window));
+        AddAction(data, L("Exportar copia de seguridad…", "Export backup…"), () => ExportBackup(window));
+        AddAction(data, L("Restaurar copia de seguridad…", "Restore backup…"), () => RestoreBackup(window));
 
         var language = Choice(style, L("Idioma del panel", "Dashboard language"),
             ["Español", "English"], English ? 1 : 0);
@@ -33,7 +51,7 @@ internal sealed partial class MainForm
             [L("Igual que Windows", "Follow Windows"), L("Día", "Day"), L("Noche", "Night")],
             preferences.Theme == "day" ? 1 : preferences.Theme == "night" ? 2 : 0);
         var compact = Check(style, L("Vista compacta", "Compact view"), preferences.Compact);
-        var showArt = Check(style, L("Mostrar ilustración", "Show artwork"), preferences.HiddenPanels?.Contains("art") != true);
+        var showArt = Check(style, L("Mostrar ilustración", "Show artwork"), preferences.ShowArtwork);
         var showGuide = Check(style, L("Mostrar guía de conexión", "Show connection guide"), !preferences.GuideDismissed);
         var tripFields = new Dictionary<string, CheckBox>();
         foreach (var (key, title) in new[]
@@ -144,11 +162,7 @@ internal sealed partial class MainForm
         AddAction(game, L("Retirar lector", "Remove reader"), () => MaintainReader(true));
         AddAction(game, L("Copiar diagnóstico", "Copy diagnostics"), CopyDiagnostics);
         AddAction(game, L("Licencias", "Licenses"), ShowLicenses);
-        AddAction(game, recording is null ? L("Grabar telemetría local…", "Record local telemetry…")
-            : L("Detener grabación", "Stop recording"), () => { ToggleRecording(window); window.Close(); });
-        AddAction(game, L("Reproducir grabación…", "Replay recording…"), () => { OpenPlayback(window); window.Close(); });
-        if (playback is not null)
-            AddAction(game, L("Salir de la reproducción", "Exit replay"), () => { playback = null; RefreshPresence(); window.Close(); });
+        AddAction(game, L("Versión y compatibilidad del lector…", "Reader version and compatibility…"), () => ShowReader(window));
 
         apply.Click += (_, _) =>
         {
@@ -162,35 +176,48 @@ internal sealed partial class MainForm
                 return;
             }
             var compactChanged = preferences.Compact != compact.Checked;
+            var themeChanged = preferences.Theme != ThemeValue();
+            string ThemeValue() => theme.SelectedIndex switch { 1 => "day", 2 => "night", _ => "system" };
             demo = localDemo.Checked;
             SavePreferences(ReadDiscord() with
             {
                 Language = language.SelectedIndex == 1 ? "en" : "es",
-                Theme = theme.SelectedIndex switch { 1 => "day", 2 => "night", _ => "system" },
+                Theme = ThemeValue(),
+                TextPercent = textSizes[textSize.SelectedIndex],
+                FuelThreshold = thresholds[fuel.SelectedIndex],
+                PrivacyShortcut = shortcuts.SelectedIndex,
+                RetentionDays = retentionValues[retention.SelectedIndex],
+                ActivityImage = image.Checked,
+                ActivityTimer = activityTimer.Checked,
+                ShowArtwork = showArt.Checked,
                 Compact = compact.Checked,
                 GuideDismissed = !showGuide.Checked,
                 CityCatalog = catalog.SelectedIndex > 0 ? catalog.SelectedItem as string : null,
                 PanelOrder = KeysOf(orderPanels).SequenceEqual(panelKeys) ? null : KeysOf(orderPanels),
                 HiddenPanels = KeysOf(orderPanels).Where(key => !IsChecked(orderPanels, key))
                     .Concat(tripFields.Where(field => !field.Value.Checked).Select(field => field.Key))
-                    .Concat(showArt.Checked ? [] : new[] { "art" }).ToArray()
+                    .ToArray()
             });
             LoadCatalog();
             ResetLocation(IsGameRunning());
             ApplyLanguage();
-            ApplyTheme();
+            RegisterPrivacyShortcut();
+            if (preferences.PrivacyShortcut > 0 && !hotkeyRegistered)
+                MessageBox.Show(window, L("Windows no pudo registrar el atajo. Prueba otra combinación.", "Windows could not register the shortcut. Try another combination."), Text);
+            if (themeChanged) MessageBox.Show(window, L("Vuelve a abrir la app para aplicar el tema.", "Reopen the app to apply the theme."), Text);
+            ScaleText(this);
             if (compactChanged && !fullScreen) ApplyCompactSize();
             ConfigurePanels();
             RefreshPresence();
             window.DialogResult = DialogResult.OK;
         };
-        Restyle(window);
+        StyleTool(window);
         window.ShowDialog(this);
     }
 
     private TableLayoutPanel AddTab(TabControl tabs, string name)
     {
-        var page = new TabPage(name) { AutoScroll = true, BackColor = Themed(Background) };
+        var page = new TabPage(name) { AutoScroll = true, BackColor = Background };
         var content = Grid(1);
         content.Padding = new Padding(17);
         page.Controls.Add(content);
@@ -200,7 +227,7 @@ internal sealed partial class MainForm
 
     private static ComboBox Choice(TableLayoutPanel parent, string title, string[] items, int selected)
     {
-        var box = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = title };
+        var box = new ComboBox { Dock = DockStyle.Top, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = title };
         box.Items.AddRange(items);
         box.SelectedIndex = selected;
         AddRows(parent, TextLabel(title, 10, true), box);
@@ -209,7 +236,7 @@ internal sealed partial class MainForm
 
     private static CheckBox Check(TableLayoutPanel parent, string title, bool value)
     {
-        var box = new CheckBox { Text = title, Checked = value, AutoSize = true, ForeColor = Foreground };
+        var box = new CheckBox { Text = title, Checked = value, AutoSize = true, FlatStyle = FlatStyle.Flat };
         AddRows(parent, box);
         return box;
     }
