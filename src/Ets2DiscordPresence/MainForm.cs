@@ -7,24 +7,31 @@ namespace Ets2DiscordPresence;
 internal sealed partial class MainForm : Form
 {
     private static readonly TelemetrySnapshot Sample = new(false, true, "Maquinaria industrial para obras de infraestructura",
-        "Lyon", "Turín", 0, 0, 215_000, 12, 1, 9 * 60 + 30, 10_800, 390);
+        "Lyon", "Turín", -21_500, 27_000, 215_000, 12, 1, 9 * 60 + 30, 10_800, 390,
+        new TripSignals(770, 0, false, false, true, false, false, false, 15, 500, 200, 0, "example", "torino"));
 
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
     private readonly DiscordRpcClient discord = new(DiscordIdentity.ApplicationId);
     private readonly CancellationTokenSource lifetime = new();
-    private readonly CityLookup cities;
+    private CityLookup cities;
+    private readonly TripJournal journal = new();
+    private TripEntry? completedTrip;
+    private bool isLight;
     private readonly Icon appIcon;
     private readonly NotifyIcon tray;
     private readonly ContextMenuStrip trayMenu = new();
-    private readonly ContextMenuStrip settingsMenu = new();
     private readonly bool startMinimized;
     private readonly ToolStripMenuItem trayPause = new();
     private AppSettings preferences = AppSettings.Load();
-    private PresenceText? lastPresence;
+    private readonly PresencePublication publication = new();
+    private StreamWriter? recording;
+    private long recordingStarted;
+    private IReadOnlyList<RecordedFrame>? playback;
+    private long playbackStarted;
+    private int playbackIndex;
     private volatile bool discordReady;
     private volatile bool discordWasReady;
     private int connectionGeneration;
-    private int publishedGeneration;
     private bool demo;
     private bool restartNeeded;
     private bool gamePrepared;
@@ -56,6 +63,7 @@ internal sealed partial class MainForm : Form
         Icon = appIcon;
         using var cityData = AppResources.Open("cities_default.json");
         cities = new CityLookup(cityData);
+        LoadCatalog();
         BuildLayout();
 
         tray = new NotifyIcon { Icon = appIcon, Text = Text, Visible = true, ContextMenuStrip = trayMenu };
@@ -83,9 +91,12 @@ internal sealed partial class MainForm : Form
         toggle.Click += (_, _) => ToggleSharing();
         locate.Click += (_, _) => LocateGame();
         launch.Click += (_, _) => OpenExternal("steam://rungameid/227300");
-        settingsButton.Click += (_, _) => settingsMenu.Show(settingsButton, new Point(0, settingsButton.Height));
+        settingsButton.Click += (_, _) => ShowSettings();
         updateButton.Click += (_, _) => { if (updateUrl is not null) OpenExternal(updateUrl); };
-        BuildSettings();
+        ApplyCompactSize();
+        ApplyLanguage();
+        ApplyTheme();
+        ConfigurePanels();
         Shown += (_, _) => Start();
         FormClosed += (_, _) =>
         {
@@ -94,7 +105,8 @@ internal sealed partial class MainForm : Form
             discord.Dispose();
             tray.Dispose();
             trayMenu.Dispose();
-            settingsMenu.Dispose();
+            journal.Flush();
+            recording?.Dispose();
             appIcon.Dispose();
             lifetime.Dispose();
         };
@@ -122,7 +134,7 @@ internal sealed partial class MainForm : Form
             if (release is { } found && !IsDisposed)
             {
                 updateUrl = found.Url;
-                updateButton.Text = $"↓  Descargar v{found.Version}";
+                Translate(updateButton, $"↓ Descargar v{found.Version}", $"↓ Download v{found.Version}");
                 updateButton.Visible = true;
             }
         }
@@ -143,7 +155,7 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            SetSetupError("No se pudo leer la biblioteca de Steam. Usa Buscar ETS2.", allowBrowse: true);
+            SetSetupError(L("No se pudo leer la biblioteca de Steam. Usa Buscar ETS2.", "The Steam library could not be read. Use Locate ETS2."), allowBrowse: true);
         }
     }
 
@@ -151,10 +163,16 @@ internal sealed partial class MainForm : Form
     {
         gamePath = path;
         setupError = null;
+        if (preferences.ReaderDisabled)
+        {
+            gamePrepared = true;
+            canLocateGame = path is null;
+            return;
+        }
         canLocateGame = false;
         if (path is null)
         {
-            SetSetupError("ETS2 no aparece en Steam. Selecciona su carpeta.", allowBrowse: true);
+            SetSetupError(L("ETS2 no aparece en Steam. Selecciona su carpeta.", "ETS2 was not found in Steam. Select its folder."), allowBrowse: true);
             return;
         }
         try
@@ -164,7 +182,7 @@ internal sealed partial class MainForm : Form
         }
         catch (UnauthorizedAccessException)
         {
-            SetSetupError("Windows protegió la carpeta de ETS2. Abre esta app como administrador para prepararla.", allowBrowse: false);
+            SetSetupError(L("Windows protegió la carpeta de ETS2. Abre esta app como administrador para prepararla.", "Windows protected the ETS2 folder. Run this app as administrator to prepare it."), allowBrowse: false);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or InvalidDataException)
         {
@@ -181,55 +199,11 @@ internal sealed partial class MainForm : Form
 
     private void LocateGame()
     {
-        using var picker = new FolderBrowserDialog { Description = "Selecciona la carpeta de Euro Truck Simulator 2" };
+        using var picker = new FolderBrowserDialog { Description = L("Selecciona la carpeta de Euro Truck Simulator 2", "Select the Euro Truck Simulator 2 folder") };
         if (picker.ShowDialog(this) != DialogResult.OK) return;
         PrepareGame(picker.SelectedPath);
         if (gamePrepared) SavePreferences(preferences with { GamePath = picker.SelectedPath });
         RefreshPresence();
-    }
-
-    private void BuildSettings()
-    {
-        AddSetting("Compartir carga", preferences.ShowCargo, value => SavePreferences(preferences with { ShowCargo = value }));
-        AddSetting("Compartir ruta", preferences.ShowRoute, value => SavePreferences(preferences with { ShowRoute = value }));
-        AddSetting("Compartir ciudad cercana", preferences.ShowCity, value => SavePreferences(preferences with { ShowCity = value }));
-        AddSetting("Compartir distancia", preferences.ShowDistance, value => SavePreferences(preferences with { ShowDistance = value }));
-        AddSetting("Dar prioridad a la ruta en Discord", preferences.RouteFirst, value => SavePreferences(preferences with { RouteFirst = value }));
-        settingsMenu.Items.Add(new ToolStripSeparator());
-        AddSetting("Vista compacta", preferences.Compact, value =>
-        {
-            SavePreferences(preferences with { Compact = value });
-            ApplyCompactSize();
-        });
-        AddSetting("Demostración local", false, value =>
-        {
-            demo = value;
-            RefreshPresence();
-        });
-        AddSetting("Iniciar minimizada con Windows", DesktopServices.StartsWithWindows(), value =>
-        {
-            try { DesktopServices.SetStartup(value); }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
-            {
-                MessageBox.Show(this, "Windows no permitió cambiar el inicio automático.", Text);
-            }
-        });
-        settingsMenu.Items.Add("Buscar ETS2…", null, (_, _) => LocateGame());
-        settingsMenu.Items.Add("Reintentar preparación", null, (_, _) =>
-        {
-            PrepareGame(SteamLocator.IsValidGamePath(gamePath) ? gamePath : null);
-            if (gamePath is null) DiscoverGame();
-            RefreshPresence();
-        });
-        settingsMenu.Items.Add("Copiar diagnóstico", null, (_, _) => CopyDiagnostics());
-        ApplyCompactSize();
-    }
-
-    private void AddSetting(string text, bool enabled, Action<bool> change)
-    {
-        var item = new ToolStripMenuItem(text) { Checked = enabled, CheckOnClick = true };
-        item.CheckedChanged += (_, _) => change(item.Checked);
-        settingsMenu.Items.Add(item);
     }
 
     private void SavePreferences(AppSettings updated)
@@ -242,7 +216,7 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            settingsError = "Windows no permitió guardar tus preferencias.";
+            settingsError = L("Windows no permitió guardar tus preferencias.", "Windows did not allow saving your settings.");
         }
         RefreshPresence();
     }
@@ -255,7 +229,7 @@ internal sealed partial class MainForm : Form
 
     private void UpdateSharingControls()
     {
-        var action = preferences.Sharing ? "Pausar publicación" : "Reanudar publicación";
+        var action = preferences.Sharing ? L("Pausar publicación", "Pause publishing") : L("Reanudar publicación", "Resume publishing");
         toggle.Text = $"{(preferences.Sharing ? "Ⅱ" : "▶")}  {action}";
         trayPause.Text = action;
     }
@@ -263,17 +237,18 @@ internal sealed partial class MainForm : Form
     private void RefreshPresence()
     {
         var ready = discordReady;
-        SetStatus(discordStatus, ready ? "Discord · Conectado" :
-            discordWasReady ? "Discord · Reconectando…" : "Discord · Esperando la app de escritorio", ready);
+        SetStatus(discordStatus, ready ? L("Discord · Conectado", "Discord · Connected") :
+            discordWasReady ? L("Discord · Reconectando…", "Discord · Reconnecting…") : L("Discord · Esperando la app de escritorio", "Discord · Waiting for desktop app"), ready);
 
         var now = Environment.TickCount64;
+        ApplyTheme();
         var running = IsGameRunning();
         if (!running) restartNeeded = false;
         if (now >= nextGameCheck && (!gamePrepared || !SteamLocator.IsValidGamePath(gamePath))) DiscoverGame();
 
         TelemetrySnapshot? telemetry = null;
         string? readError = null;
-        if (running) TelemetryReader.TryRead(out telemetry, out readError);
+        if (running && !preferences.ReaderDisabled) TelemetryReader.TryRead(out telemetry, out readError);
         var frozen = telemetry is not null && !IsFresh(telemetry, now);
         if (frozen) telemetry = null;
         if (telemetry is null) ResetLocation(running);
@@ -281,23 +256,42 @@ internal sealed partial class MainForm : Form
 
         locate.Visible = canLocateGame && telemetry is null;
         launch.Visible = !running;
-        var status = telemetry is not null ? "ETS2 · Viaje detectado" : frozen ? "ETS2 · Datos detenidos"
-            : setupError is not null ? "ETS2 · Revisar preparación"
-            : running ? "ETS2 · Esperando la partida" : "ETS2 · Cerrado";
+        var status = telemetry is not null ? L("ETS2 · Viaje detectado", "ETS2 · Trip detected") : frozen ? L("ETS2 · Datos detenidos", "ETS2 · Data stopped")
+            : setupError is not null ? L("ETS2 · Revisar preparación", "ETS2 · Check setup")
+            : running ? L("ETS2 · Esperando la partida", "ETS2 · Waiting for game session") : L("ETS2 · Cerrado", "ETS2 · Closed");
         SetStatus(gameStatus, status, telemetry is not null);
 
         var nearby = telemetry is null ? null : TrackCity(cities.FindNearby(telemetry.X, telemetry.Z));
-        var trip = demo ? Sample : telemetry;
-        var displayedCity = demo ? "Chambéry" : nearby;
+        if (recording is not null)
+        {
+            try { TelemetryReplay.Write(recording, new RecordedFrame(now - recordingStarted, telemetry)); }
+            catch (Exception ex) when (ex is IOException or ArgumentException)
+            {
+                recording.Dispose();
+                recording = null;
+                settingsError = L("No se pudo guardar la grabación.", "The recording could not be saved.");
+            }
+        }
+        var ending = journal.Observe(telemetry, DateTimeOffset.UtcNow, now);
+        if (ending is not null) completedTrip = ending;
+        else if (telemetry?.OnJob == true) completedTrip = null;
+        var simulated = demo || playback is not null;
+        var trip = playback is not null ? PlaybackTrip(now) : demo ? Sample : telemetry;
+        var displayedCity = playback is not null && trip is not null ? cities.FindNearby(trip.X, trip.Z)
+            : demo ? "Chambéry" : nearby;
         var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, preferences);
         RenderTrip(trip, displayedCity, presence);
-        guidance.Text = settingsError ?? (demo ? "Demostración local. El viaje de ejemplo no se publica."
-            : !preferences.Sharing ? "La publicación está pausada. Puedes reanudarla desde este panel o la bandeja."
-            : telemetry is not null ? (ready ? "Actividad preparada para Discord." : "Abre Discord de escritorio para compartir tu viaje.")
-            : setupError ?? (restartNeeded ? "Reinicia ETS2 para activar la lectura del viaje."
-                : frozen ? "El juego dejó de enviar datos. Se retiró la actividad anterior."
-                : running ? readError ?? "Entra a una partida." : "Abre ETS2 para empezar."));
-        Publish(!demo && preferences.Sharing && ready ? presence : null);
+        RenderExtras(trip, now, running, ready);
+        tripMap.UpdateMap(trip, cities, English, isLight, demo);
+        guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (playback is not null ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
+            : demo ? L("Demostración local. El viaje de ejemplo no se publica.", "Local demo. The sample trip stays local.")
+            : !preferences.Sharing ? L("La publicación está pausada. Puedes reanudarla desde este panel o la bandeja.", "Publishing is paused. Resume here or from the tray.")
+            : telemetry is not null ? (ready ? L("Actividad preparada para Discord.", "Activity ready for Discord.") : L("Abre Discord de escritorio para compartir tu viaje.", "Open Discord desktop to share your trip."))
+            : preferences.ReaderDisabled ? L("Lector desactivado. Puedes restaurarlo en Ajustes.", "Reader disabled. Restore it in Settings.")
+            : setupError ?? (restartNeeded ? L("Reinicia ETS2 para activar la lectura del viaje.", "Restart ETS2 to enable trip data.")
+                : frozen ? L("El juego dejó de enviar datos. Se retiró la actividad anterior.", "The game stopped sending data. The previous activity was cleared.")
+                : running ? (English ? L("Entra a una partida.", "Enter a game session or check the reader in Settings.") : readError ?? "Entra a una partida.") : L("Abre ETS2 para empezar.", "Launch ETS2 to begin.")));
+        Publish(PresencePublication.Select(presence, simulated, preferences.Sharing, ready));
     }
 
     private bool IsFresh(TelemetrySnapshot snapshot, long now)
@@ -332,14 +326,56 @@ internal sealed partial class MainForm : Form
 
     private void Publish(PresenceText? presence)
     {
-        var generation = Volatile.Read(ref connectionGeneration);
-        if (presence == lastPresence && (presence is null || generation == publishedGeneration)) return;
-        if (presence is null)
-            discord.ClearPresence();
-        else
-            discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
-        lastPresence = presence;
-        publishedGeneration = generation;
+        if (!publication.ShouldSend(presence, Volatile.Read(ref connectionGeneration))) return;
+        if (presence is null) discord.ClearPresence();
+        else discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
+    }
+
+    private TelemetrySnapshot? PlaybackTrip(long now)
+    {
+        var frames = playback!;
+        while (playbackIndex + 1 < frames.Count && frames[playbackIndex + 1].ElapsedMs <= now - playbackStarted)
+            playbackIndex++;
+        return frames[playbackIndex].Trip;
+    }
+
+    private void ToggleRecording(IWin32Window owner)
+    {
+        if (recording is not null)
+        {
+            recording.Dispose();
+            recording = null;
+            MessageBox.Show(owner, L("Grabación guardada.", "Recording saved."), Text);
+            return;
+        }
+        using var picker = new SaveFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl", FileName = "ets2-trip.jsonl" };
+        if (picker.ShowDialog(owner) != DialogResult.OK) return;
+        try
+        {
+            recording = new StreamWriter(picker.FileName);
+            recordingStarted = Environment.TickCount64;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(owner, L("No se pudo abrir el archivo.", "Could not open the file."), Text);
+        }
+    }
+
+    private void OpenPlayback(IWin32Window owner)
+    {
+        using var picker = new OpenFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl" };
+        if (picker.ShowDialog(owner) != DialogResult.OK) return;
+        try
+        {
+            playback = TelemetryReplay.Read(picker.FileName);
+            playbackStarted = Environment.TickCount64;
+            playbackIndex = 0;
+            RefreshPresence();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            MessageBox.Show(owner, L("Grabación inválida o demasiado grande.", "Invalid or oversized recording."), Text);
+        }
     }
 
     private static bool IsGameRunning()
@@ -360,18 +396,18 @@ internal sealed partial class MainForm : Form
                 $"Versión de ETS2: {gameVersion ?? "No detectada"}",
                 $"Revisión del lector: {lastRevision?.ToString() ?? "No detectada"}",
                 gameStatus.Text, discordStatus.Text, setupError ?? ""));
-            MessageBox.Show(this, "Diagnóstico copiado al portapapeles.", Text);
+            MessageBox.Show(this, L("Diagnóstico copiado al portapapeles.", "Diagnostics copied to the clipboard."), Text);
         }
         catch (System.Runtime.InteropServices.ExternalException)
         {
-            MessageBox.Show(this, "El portapapeles está ocupado. Intenta otra vez.", Text);
+            MessageBox.Show(this, L("El portapapeles está ocupado. Intenta otra vez.", "The clipboard is busy. Try again."), Text);
         }
     }
 
     private void OpenExternal(string uri)
     {
         try { DesktopServices.Open(uri); }
-        catch (Win32Exception) { MessageBox.Show(this, "Windows no pudo abrir el enlace.", Text); }
+        catch (Win32Exception) { MessageBox.Show(this, L("Windows no pudo abrir el enlace.", "Windows could not open the link."), Text); }
     }
 
     internal void RestoreWindow()

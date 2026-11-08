@@ -3,1202 +3,1442 @@
     {
       "realName": "Aalborg",
       "x": "855.258",
-      "z": "-35995.1"
+      "z": "-35995.1",
+      "gameName": "aalborg"
     },
     {
       "realName": "Aberdeen",
       "x": "-38846.7",
-      "z": "-55270.3"
+      "z": "-55270.3",
+      "gameName": "aberdeen"
     },
     {
       "realName": "Amsterdam",
       "x": "-18562",
-      "z": "-11736.2"
+      "z": "-11736.2",
+      "gameName": "amsterdam"
     },
     {
       "realName": "Bergen",
       "x": "-10371.6",
-      "z": "-55777.6"
+      "z": "-55777.6",
+      "gameName": "bergen"
     },
     {
       "realName": "Berlin",
       "x": "10183.1",
-      "z": "-10001.2"
+      "z": "-10001.2",
+      "gameName": "berlin"
     },
     {
       "realName": "Bern",
       "x": "-12730.8",
-      "z": "20130.1"
+      "z": "20130.1",
+      "gameName": "bern"
     },
     {
       "realName": "Białystok",
       "x": "44098.4",
-      "z": "-15083.4"
+      "z": "-15083.4",
+      "gameName": "bialystok"
     },
     {
       "realName": "Birmingham",
       "x": "-45951.1",
-      "z": "-20423"
+      "z": "-20423",
+      "gameName": "birmingham"
     },
     {
       "realName": "Bratislava",
       "x": "24823.3",
-      "z": "14831"
+      "z": "14831",
+      "gameName": "bratislava"
     },
     {
       "realName": "Bremen",
       "x": "-4545.41",
-      "z": "-14326.1"
+      "z": "-14326.1",
+      "gameName": "bremen"
     },
     {
       "realName": "Brno",
       "x": "22273.8",
-      "z": "8964.95"
+      "z": "8964.95",
+      "gameName": "brno"
     },
     {
       "realName": "Brussel",
       "x": "-21576",
-      "z": "-3235.03"
+      "z": "-3235.03",
+      "gameName": "brussel"
     },
     {
       "realName": "Budapest",
       "x": "32367.8",
-      "z": "17882.7"
+      "z": "17882.7",
+      "gameName": "budapest"
     },
     {
       "realName": "Banská Bystrica",
       "x": "32657.6",
-      "z": "10680.5"
+      "z": "10680.5",
+      "gameName": "bystrica"
     },
     {
       "realName": "Calais",
       "x": "-30363",
-      "z": "-4985.64"
+      "z": "-4985.64",
+      "gameName": "calais"
     },
     {
       "realName": "Cambridge",
       "x": "-36822.7",
-      "z": "-16119.4"
+      "z": "-16119.4",
+      "gameName": "cambridge"
     },
     {
       "realName": "Cardiff",
       "x": "-54005.3",
-      "z": "-14698.4"
+      "z": "-14698.4",
+      "gameName": "cardiff"
     },
     {
       "realName": "Carlisle",
       "x": "-45889.2",
-      "z": "-39573.5"
+      "z": "-39573.5",
+      "gameName": "carlisle"
     },
     {
       "realName": "Debrecen",
       "x": "41641.6",
-      "z": "17483.7"
+      "z": "17483.7",
+      "gameName": "debrecen"
     },
     {
       "realName": "Dijon",
       "x": "-22470",
-      "z": "16655.5"
+      "z": "16655.5",
+      "gameName": "dijon"
     },
     {
       "realName": "Dortmund",
       "x": "-8266.59",
-      "z": "-4718.39"
+      "z": "-4718.39",
+      "gameName": "dortmund"
     },
     {
       "realName": "Dover",
       "x": "-33321.9",
-      "z": "-7884.36"
+      "z": "-7884.36",
+      "gameName": "dover"
     },
     {
       "realName": "Dresden",
       "x": "12411.8",
-      "z": "-1606.27"
+      "z": "-1606.27",
+      "gameName": "dresden"
     },
     {
       "realName": "Duisburg",
       "x": "-13113.6",
-      "z": "-6370.93"
+      "z": "-6370.93",
+      "gameName": "duisburg"
     },
     {
       "realName": "Düsseldorf",
       "x": "-13377.2",
-      "z": "-4399.6"
+      "z": "-4399.6",
+      "gameName": "dusseldorf"
     },
     {
       "realName": "Edinburgh",
       "x": "-44900.7",
-      "z": "-47219.7"
+      "z": "-47219.7",
+      "gameName": "edinburgh"
     },
     {
       "realName": "Erfurt",
       "x": "2436.19",
-      "z": "-1733.77"
+      "z": "-1733.77",
+      "gameName": "erfurt"
     },
     {
       "realName": "Esbjerg",
       "x": "-4699.43",
-      "z": "-27555.9"
+      "z": "-27555.9",
+      "gameName": "esbjerg"
     },
     {
       "realName": "Felixstowe",
       "x": "-31664.6",
-      "z": "-13837.2"
+      "z": "-13837.2",
+      "gameName": "felixstowe"
     },
     {
       "realName": "Frankfurt am Main",
       "x": "-6304.08",
-      "z": "2732.91"
+      "z": "2732.91",
+      "gameName": "frankfurt"
     },
     {
       "realName": "Frederikshavn",
       "x": "2711.7",
-      "z": "-38141.5"
+      "z": "-38141.5",
+      "gameName": "frederikshv"
     },
     {
       "realName": "Gdańsk",
       "x": "28343.1",
-      "z": "-20619.5"
+      "z": "-20619.5",
+      "gameName": "gdansk"
     },
     {
       "realName": "Gedser",
       "x": "6271.11",
-      "z": "-22000.3"
+      "z": "-22000.3",
+      "gameName": "gedser"
     },
     {
       "realName": "Genève",
       "x": "-18099.1",
-      "z": "23717"
+      "z": "23717",
+      "gameName": "geneve"
     },
     {
       "realName": "Glasgow",
       "x": "-50384.7",
-      "z": "-48471.6"
+      "z": "-48471.6",
+      "gameName": "glasgow"
     },
     {
       "realName": "Göteborg",
       "x": "7235.89",
-      "z": "-40227.5"
+      "z": "-40227.5",
+      "gameName": "goteborg"
     },
     {
       "realName": "Graz",
       "x": "18216.5",
-      "z": "20552.7"
+      "z": "20552.7",
+      "gameName": "graz"
     },
     {
       "realName": "Grimsby",
       "x": "-36117.9",
-      "z": "-26575.2"
+      "z": "-26575.2",
+      "gameName": "grimsby"
     },
     {
       "realName": "Groningen",
       "x": "-12437.6",
-      "z": "-15468.7"
+      "z": "-15468.7",
+      "gameName": "groningen"
     },
     {
       "realName": "Hamburg",
       "x": "-1666.25",
-      "z": "-16912.1"
+      "z": "-16912.1",
+      "gameName": "hamburg"
     },
     {
       "realName": "Hannover",
       "x": "-1928.93",
-      "z": "-8916.4"
+      "z": "-8916.4",
+      "gameName": "hannover"
     },
     {
       "realName": "Helsingborg",
       "x": "9405.2",
-      "z": "-29882.4"
+      "z": "-29882.4",
+      "gameName": "helsingborg"
     },
     {
       "realName": "Hirtshals",
       "x": "1425.47",
-      "z": "-38873.3"
+      "z": "-38873.3",
+      "gameName": "hirtshals"
     },
     {
       "realName": "Innsbruck",
       "x": "2250.09",
-      "z": "19214.1"
+      "z": "19214.1",
+      "gameName": "innsbruck"
     },
     {
       "realName": "Jönköping",
       "x": "14177.3",
-      "z": "-39575.6"
+      "z": "-39575.6",
+      "gameName": "jonkoping"
     },
     {
       "realName": "Kalmar",
       "x": "20559.5",
-      "z": "-33634.5"
+      "z": "-33634.5",
+      "gameName": "kalmar"
     },
     {
       "realName": "Karlskrona",
       "x": "17145.6",
-      "z": "-30862.4"
+      "z": "-30862.4",
+      "gameName": "karlskrona"
     },
     {
       "realName": "Kassel",
       "x": "-3031.32",
-      "z": "-3898.7"
+      "z": "-3898.7",
+      "gameName": "kassel"
     },
     {
       "realName": "Katowice",
       "x": "30728.8",
-      "z": "2458.83"
+      "z": "2458.83",
+      "gameName": "katowice"
     },
     {
       "realName": "Kiel",
       "x": "188.074",
-      "z": "-20826.7"
+      "z": "-20826.7",
+      "gameName": "kiel"
     },
     {
       "realName": "Klagenfurt am Wörthersee",
       "x": "13841.3",
-      "z": "23052.6"
+      "z": "23052.6",
+      "gameName": "klagenfurt"
     },
     {
       "realName": "København",
       "x": "8100.74",
-      "z": "-28097.8"
+      "z": "-28097.8",
+      "gameName": "kobenhavn"
     },
     {
       "realName": "Köln",
       "x": "-13150.8",
-      "z": "-2732.75"
+      "z": "-2732.75",
+      "gameName": "koln"
     },
     {
       "realName": "Košice",
       "x": "39843.9",
-      "z": "10494.4"
+      "z": "10494.4",
+      "gameName": "kosice"
     },
     {
       "realName": "Kraków",
       "x": "34470.3",
-      "z": "3249.68"
+      "z": "3249.68",
+      "gameName": "krakow"
     },
     {
       "realName": "Kristiansand",
       "x": "-4638.28",
-      "z": "-42891.5"
+      "z": "-42891.5",
+      "gameName": "kristiansand"
     },
     {
       "realName": "Leipzig",
       "x": "7042.06",
-      "z": "-3160.18"
+      "z": "-3160.18",
+      "gameName": "leipzig"
     },
     {
       "realName": "Liège",
       "x": "-17181.5",
-      "z": "-1231.25"
+      "z": "-1231.25",
+      "gameName": "liege"
     },
     {
       "realName": "Lille",
       "x": "-26495.9",
-      "z": "-2483.4"
+      "z": "-2483.4",
+      "gameName": "lille"
     },
     {
       "realName": "Linköping",
       "x": "18586.1",
-      "z": "-43325.2"
+      "z": "-43325.2",
+      "gameName": "linkoping"
     },
     {
       "realName": "Linz",
       "x": "13665.7",
-      "z": "13754.6"
+      "z": "13754.6",
+      "gameName": "linz"
     },
     {
       "realName": "Liverpool",
       "x": "-48871.7",
-      "z": "-29091.8"
+      "z": "-29091.8",
+      "gameName": "liverpool"
     },
     {
       "realName": "Łódź",
       "x": "32014.5",
-      "z": "-6143.92"
+      "z": "-6143.92",
+      "gameName": "lodz"
     },
     {
       "realName": "London",
       "x": "-39546.9",
-      "z": "-11564.2"
+      "z": "-11564.2",
+      "gameName": "london"
     },
     {
       "realName": "Lublin",
       "x": "42859.6",
-      "z": "-3967.52"
+      "z": "-3967.52",
+      "gameName": "lublin"
     },
     {
       "realName": "Luxembourg",
       "x": "-16134.2",
-      "z": "4382.97"
+      "z": "4382.97",
+      "gameName": "luxembourg"
     },
     {
       "realName": "Lyon",
       "x": "-23869.8",
-      "z": "25892.3"
+      "z": "25892.3",
+      "gameName": "lyon"
     },
     {
       "realName": "Magdeburg",
       "x": "4601.58",
-      "z": "-7896.8"
+      "z": "-7896.8",
+      "gameName": "magdeburg"
     },
     {
       "realName": "Malmö",
       "x": "10744.9",
-      "z": "-27481.2"
+      "z": "-27481.2",
+      "gameName": "malmo"
     },
     {
       "realName": "Manchester",
       "x": "-45548.7",
-      "z": "-27815"
+      "z": "-27815",
+      "gameName": "manchester"
     },
     {
       "realName": "Mannheim",
       "x": "-7722.87",
-      "z": "6165.95"
+      "z": "6165.95",
+      "gameName": "mannheim"
     },
     {
       "realName": "Metz",
       "x": "-16294.5",
-      "z": "7463.71"
+      "z": "7463.71",
+      "gameName": "metz"
     },
     {
       "realName": "Milano",
       "x": "-6616.31",
-      "z": "28982.8"
+      "z": "28982.8",
+      "gameName": "milano"
     },
     {
       "realName": "München",
       "x": "3234.12",
-      "z": "14470"
+      "z": "14470",
+      "gameName": "munchen"
     },
     {
       "realName": "Newcastle-upon-Tyne",
       "x": "-39778",
-      "z": "-38787.7"
+      "z": "-38787.7",
+      "gameName": "newcastle"
     },
     {
       "realName": "Nürnberg",
       "x": "2665.54",
-      "z": "7237.8"
+      "z": "7237.8",
+      "gameName": "nurnberg"
     },
     {
       "realName": "Nynäshamn",
       "x": "26448.2",
-      "z": "-46165.7"
+      "z": "-46165.7",
+      "gameName": "nynashamn"
     },
     {
       "realName": "Odense",
       "x": "1617.69",
-      "z": "-26700.4"
+      "z": "-26700.4",
+      "gameName": "odense"
     },
     {
       "realName": "Olsztyn",
       "x": "34758.6",
-      "z": "-17885.9"
+      "z": "-17885.9",
+      "gameName": "olsztyn"
     },
     {
       "realName": "Örebro",
       "x": "17087.8",
-      "z": "-48374.7"
+      "z": "-48374.7",
+      "gameName": "orebro"
     },
     {
       "realName": "Oslo",
       "x": "4390.91",
-      "z": "-53410.5"
+      "z": "-53410.5",
+      "gameName": "oslo"
     },
     {
       "realName": "Osnabrück",
       "x": "-7702.9",
-      "z": "-9613.47"
+      "z": "-9613.47",
+      "gameName": "osnabruck"
     },
     {
       "realName": "Ostrava",
       "x": "28231.9",
-      "z": "5136.1"
+      "z": "5136.1",
+      "gameName": "ostrava"
     },
     {
       "realName": "Paris",
       "x": "-30494.9",
-      "z": "6998.41"
+      "z": "6998.41",
+      "gameName": "paris"
     },
     {
       "realName": "Pécs",
       "x": "29039.9",
-      "z": "26311.6"
+      "z": "26311.6",
+      "gameName": "pecs"
     },
     {
       "realName": "Plymouth",
       "x": "-60041.4",
-      "z": "-7882.32"
+      "z": "-7882.32",
+      "gameName": "plymouth"
     },
     {
       "realName": "Poznań",
       "x": "22863.4",
-      "z": "-9112.2"
+      "z": "-9112.2",
+      "gameName": "poznan"
     },
     {
       "realName": "Praha",
       "x": "14299.7",
-      "z": "3978.97"
+      "z": "3978.97",
+      "gameName": "prague"
     },
     {
       "realName": "Reims",
       "x": "-24021.9",
-      "z": "5799.34"
+      "z": "5799.34",
+      "gameName": "reims"
     },
     {
       "realName": "Rostock",
       "x": "6490.95",
-      "z": "-18588.9"
+      "z": "-18588.9",
+      "gameName": "rostock"
     },
     {
       "realName": "Rotterdam",
       "x": "-20156",
-      "z": "-9135.8"
+      "z": "-9135.8",
+      "gameName": "rotterdam"
     },
     {
       "realName": "Salzburg",
       "x": "9075.84",
-      "z": "16564.5"
+      "z": "16564.5",
+      "gameName": "salzburg"
     },
     {
       "realName": "Sheffield",
       "x": "-42688.8",
-      "z": "-26687.6"
+      "z": "-26687.6",
+      "gameName": "sheffield"
     },
     {
       "realName": "Södertälje",
       "x": "23525.2",
-      "z": "-46319.9"
+      "z": "-46319.9",
+      "gameName": "sodertalje"
     },
     {
       "realName": "Southampton",
       "x": "-46338.7",
-      "z": "-7523.25"
+      "z": "-7523.25",
+      "gameName": "southampton"
     },
     {
       "realName": "Stavanger",
       "x": "-10553.7",
-      "z": "-48126.8"
+      "z": "-48126.8",
+      "gameName": "stavanger"
     },
     {
       "realName": "Stockholm",
       "x": "24747.3",
-      "z": "-47131.9"
+      "z": "-47131.9",
+      "gameName": "stockholm"
     },
     {
       "realName": "Strasbourg",
       "x": "-10786.9",
-      "z": "11198.7"
+      "z": "11198.7",
+      "gameName": "strasbourg"
     },
     {
       "realName": "Stuttgart",
       "x": "-4957.84",
-      "z": "10047"
+      "z": "10047",
+      "gameName": "stuttgart"
     },
     {
       "realName": "Swansea",
       "x": "-56896",
-      "z": "-16881.9"
+      "z": "-16881.9",
+      "gameName": "swansea"
     },
     {
       "realName": "Szczecin",
       "x": "15052.7",
-      "z": "-15049.8"
+      "z": "-15049.8",
+      "gameName": "szczecin"
     },
     {
       "realName": "Szeged",
       "x": "36880.7",
-      "z": "24565.7"
+      "z": "24565.7",
+      "gameName": "szeged"
     },
     {
       "realName": "Torino",
       "x": "-12697.3",
-      "z": "30932"
+      "z": "30932",
+      "gameName": "torino"
     },
     {
       "realName": "Trelleborg",
       "x": "10808.3",
-      "z": "-25887"
+      "z": "-25887",
+      "gameName": "trelleborg"
     },
     {
       "realName": "Uppsala",
       "x": "24021.5",
-      "z": "-51634.5"
+      "z": "-51634.5",
+      "gameName": "uppsala"
     },
     {
       "realName": "Västerås",
       "x": "20937.7",
-      "z": "-50468.3"
+      "z": "-50468.3",
+      "gameName": "vasteraas"
     },
     {
       "realName": "Växjö",
       "x": "16044.4",
-      "z": "-34835.6"
+      "z": "-34835.6",
+      "gameName": "vaxjo"
     },
     {
       "realName": "Venezia",
       "x": "5089.88",
-      "z": "30078.9"
+      "z": "30078.9",
+      "gameName": "venezia"
     },
     {
       "realName": "Verona",
       "x": "39.1094",
-      "z": "29453.3"
+      "z": "29453.3",
+      "gameName": "verona"
     },
     {
       "realName": "Warszawa",
       "x": "37353.6",
-      "z": "-9467.43"
+      "z": "-9467.43",
+      "gameName": "warszawa"
     },
     {
       "realName": "Wien",
       "x": "21298.3",
-      "z": "14215.5"
+      "z": "14215.5",
+      "gameName": "wien"
     },
     {
       "realName": "Wrocław",
       "x": "23502.9",
-      "z": "-1950.98"
+      "z": "-1950.98",
+      "gameName": "wroclaw"
     },
     {
       "realName": "Zürich",
       "x": "-8473.81",
-      "z": "17968.5"
+      "z": "17968.5",
+      "gameName": "zurich"
     },
     {
       "realName": "Gdynia",
       "x": "28154.4",
-      "z": "-22045.9"
+      "z": "-22045.9",
+      "gameName": "gdyne"
     },
     {
       "realName": "Saint-Alban-du-Rhône",
       "x": "-25953.6",
-      "z": "28986.3"
+      "z": "28986.3",
+      "gameName": "alban"
     },
     {
       "realName": "Bordeaux",
       "x": "-46138.6",
-      "z": "27274.4"
+      "z": "27274.4",
+      "gameName": "bordeaux"
     },
     {
       "realName": "Bourges",
       "x": "-31951.8",
-      "z": "16275.5"
+      "z": "16275.5",
+      "gameName": "bourges"
     },
     {
       "realName": "Brest",
       "x": "-56771.4",
-      "z": "3869.3"
+      "z": "3869.3",
+      "gameName": "brest"
     },
     {
       "realName": "Civaux",
       "x": "-39029.7",
-      "z": "18292"
+      "z": "18292",
+      "gameName": "civaux"
     },
     {
       "realName": "Clermont-Ferrand",
       "x": "-30447.4",
-      "z": "24698.4"
+      "z": "24698.4",
+      "gameName": "clermont"
     },
     {
       "realName": "Golfech",
       "x": "-40395.4",
-      "z": "31472.6"
+      "z": "31472.6",
+      "gameName": "golfech"
     },
     {
       "realName": "La Rochelle",
       "x": "-46575.7",
-      "z": "19532.5"
+      "z": "19532.5",
+      "gameName": "larochelle"
     },
     {
       "realName": "Saint-Laurent",
       "x": "-35649.6",
-      "z": "13817.4"
+      "z": "13817.4",
+      "gameName": "laurent"
     },
     {
       "realName": "Le Havre",
       "x": "-37894.2",
-      "z": "1515.48"
+      "z": "1515.48",
+      "gameName": "lehavre"
     },
     {
       "realName": "Le Mans",
       "x": "-39749.7",
-      "z": "9718.43"
+      "z": "9718.43",
+      "gameName": "lemans"
     },
     {
       "realName": "Limoges",
       "x": "-37417.3",
-      "z": "23632"
+      "z": "23632",
+      "gameName": "limoges"
     },
     {
       "realName": "Marseille",
       "x": "-23472.4",
-      "z": "39210.8"
+      "z": "39210.8",
+      "gameName": "marseille"
     },
     {
       "realName": "Montpellier",
       "x": "-30052.4",
-      "z": "36127.6"
+      "z": "36127.6",
+      "gameName": "montpellier"
     },
     {
       "realName": "Nantes",
       "x": "-47170.9",
-      "z": "13162"
+      "z": "13162",
+      "gameName": "nantes"
     },
     {
       "realName": "Nice",
       "x": "-15520.4",
-      "z": "38206.2"
+      "z": "38206.2",
+      "gameName": "nice"
     },
     {
       "realName": "Paluel",
       "x": "-33608.1",
-      "z": "224.902"
+      "z": "224.902",
+      "gameName": "paluel"
     },
     {
       "realName": "Rennes",
       "x": "-46539.8",
-      "z": "8064.61"
+      "z": "8064.61",
+      "gameName": "rennes"
     },
     {
       "realName": "Roscoff",
       "x": "-53697.9",
-      "z": "3120.41"
+      "z": "3120.41",
+      "gameName": "roscoff"
     },
     {
       "realName": "Toulouse",
       "x": "-39213.8",
-      "z": "35665.6"
+      "z": "35665.6",
+      "gameName": "toulouse"
     },
     {
       "realName": "Ancona",
       "x": "10260.4",
-      "z": "40272.5"
+      "z": "40272.5",
+      "gameName": "ancona"
     },
     {
       "realName": "L'Aquila",
       "x": "10098.9",
-      "z": "46803.9"
+      "z": "46803.9",
+      "gameName": "aquila"
     },
     {
       "realName": "Bari",
       "x": "23803.7",
-      "z": "54577.8"
+      "z": "54577.8",
+      "gameName": "bari"
     },
     {
       "realName": "Bologna",
       "x": "1895.71",
-      "z": "34717.7"
+      "z": "34717.7",
+      "gameName": "bologna"
     },
     {
       "realName": "Cagliari",
       "x": "-9351.08",
-      "z": "64225.5"
+      "z": "64225.5",
+      "gameName": "cagliari"
     },
     {
       "realName": "Catania",
       "x": "16904.9",
-      "z": "75107.5"
+      "z": "75107.5",
+      "gameName": "catania"
     },
     {
       "realName": "Catanzaro",
       "x": "23154.8",
-      "z": "66889.7"
+      "z": "66889.7",
+      "gameName": "catanz"
     },
     {
       "realName": "Civitavecchia",
       "x": "3124",
-      "z": "48749.1"
+      "z": "48749.1",
+      "gameName": "civitavec"
     },
     {
       "realName": "Crotone",
       "x": "25677.5",
-      "z": "65250.7"
+      "z": "65250.7",
+      "gameName": "crotone"
     },
     {
       "realName": "Enna",
       "x": "12818.1",
-      "z": "74267.5"
+      "z": "74267.5",
+      "gameName": "enna"
     },
     {
       "realName": "Firenze",
       "x": "2042.68",
-      "z": "38929.3"
+      "z": "38929.3",
+      "gameName": "firenze"
     },
     {
       "realName": "Foggia",
       "x": "18927.3",
-      "z": "52413.7"
+      "z": "52413.7",
+      "gameName": "foggia"
     },
     {
       "realName": "Genova",
       "x": "-8329.93",
-      "z": "34875.6"
+      "z": "34875.6",
+      "gameName": "genova"
     },
     {
       "realName": "Imola",
       "x": "3285.87",
-      "z": "35401.5"
+      "z": "35401.5",
+      "gameName": "imola"
     },
     {
       "realName": "La Spezia",
       "x": "-5183.63",
-      "z": "37196.4"
+      "z": "37196.4",
+      "gameName": "laspezia"
     },
     {
       "realName": "Latina",
       "x": "7571.98",
-      "z": "52219.6"
+      "z": "52219.6",
+      "gameName": "latina"
     },
     {
       "realName": "Lecce",
       "x": "30077",
-      "z": "58629.2"
+      "z": "58629.2",
+      "gameName": "lecce"
     },
     {
       "realName": "Livorno",
       "x": "-2974.56",
-      "z": "40352.3"
+      "z": "40352.3",
+      "gameName": "livorno"
     },
     {
       "realName": "Lucca",
       "x": "-1316.87",
-      "z": "38411.4"
+      "z": "38411.4",
+      "gameName": "lucca"
     },
     {
       "realName": "Messina",
       "x": "18557.4",
-      "z": "70913.3"
+      "z": "70913.3",
+      "gameName": "messina"
     },
     {
       "realName": "Modena",
       "x": "-110.371",
-      "z": "34033.2"
+      "z": "34033.2",
+      "gameName": "modena"
     },
     {
       "realName": "Napoli",
       "x": "13301.3",
-      "z": "55970.5"
+      "z": "55970.5",
+      "gameName": "napoli"
     },
     {
       "realName": "Olbia",
       "x": "-6934.47",
-      "z": "54933.6"
+      "z": "54933.6",
+      "gameName": "olbia"
     },
     {
       "realName": "Oristano",
       "x": "-11619.1",
-      "z": "59839.6"
+      "z": "59839.6",
+      "gameName": "oristano"
     },
     {
       "realName": "Palermo",
       "x": "8961.45",
-      "z": "71177.8"
+      "z": "71177.8",
+      "gameName": "palermo"
     },
     {
       "realName": "Parma",
       "x": "-2529.54",
-      "z": "33610.7"
+      "z": "33610.7",
+      "gameName": "parma"
     },
     {
       "realName": "Perugia",
       "x": "5484.8",
-      "z": "42625.8"
+      "z": "42625.8",
+      "gameName": "perugia"
     },
     {
       "realName": "Pescara",
       "x": "12380.7",
-      "z": "47439"
+      "z": "47439",
+      "gameName": "pescara"
     },
     {
       "realName": "Pisa",
       "x": "-2296.73",
-      "z": "39358.6"
+      "z": "39358.6",
+      "gameName": "pisa"
     },
     {
       "realName": "Potenza",
       "x": "19793.2",
-      "z": "57224.2"
+      "z": "57224.2",
+      "gameName": "potenza"
     },
     {
       "realName": "Ravenna",
       "x": "5416.85",
-      "z": "35514.5"
+      "z": "35514.5",
+      "gameName": "ravenna"
     },
     {
       "realName": "Reggio",
       "x": "20164.5",
-      "z": "72275.1"
+      "z": "72275.1",
+      "gameName": "reggio"
     },
     {
       "realName": "Roma",
       "x": "5853.76",
-      "z": "49761.7"
+      "z": "49761.7",
+      "gameName": "roma"
     },
     {
       "realName": "Siena",
       "x": "1194.18",
-      "z": "41722.3"
+      "z": "41722.3",
+      "gameName": "siena"
     },
     {
       "realName": "Taranto",
       "x": "25414.4",
-      "z": "58739.8"
+      "z": "58739.8",
+      "gameName": "taranto"
     },
     {
       "realName": "Daugavpils",
       "x": "53075.4",
-      "z": "-31905.7"
+      "z": "-31905.7",
+      "gameName": "daugavpils"
     },
     {
       "realName": "Helsinki",
       "x": "44945.4",
-      "z": "-55691.5"
+      "z": "-55691.5",
+      "gameName": "helsinki"
     },
     {
       "realName": "Калининград",
       "x": "34365.2",
-      "z": "-23181.4"
+      "z": "-23181.4",
+      "gameName": "kaliningrad"
     },
     {
       "realName": "Kaunas",
       "x": "45564",
-      "z": "-25347.7"
+      "z": "-25347.7",
+      "gameName": "kaunas"
     },
     {
       "realName": "Klaipėda",
       "x": "36342.8",
-      "z": "-28719.6"
+      "z": "-28719.6",
+      "gameName": "klaipeda"
     },
     {
       "realName": "Kotka",
       "x": "50245.1",
-      "z": "-58045.7"
+      "z": "-58045.7",
+      "gameName": "kotka"
     },
     {
       "realName": "Kouvola",
       "x": "48776.3",
-      "z": "-60408.9"
+      "z": "-60408.9",
+      "gameName": "kouvola"
     },
     {
       "realName": "Kunda",
       "x": "49785.3",
-      "z": "-52304.7"
+      "z": "-52304.7",
+      "gameName": "kunda"
     },
     {
       "realName": "Lahti",
       "x": "45529.8",
-      "z": "-60557"
+      "z": "-60557",
+      "gameName": "lahti"
     },
     {
       "realName": "Liepāja",
       "x": "35329.5",
-      "z": "-33299.9"
+      "z": "-33299.9",
+      "gameName": "liepaja"
     },
     {
       "realName": "Loviisa",
       "x": "47717.4",
-      "z": "-57187.8"
+      "z": "-57187.8",
+      "gameName": "loviisa"
     },
     {
       "realName": "Луга",
       "x": "60046.5",
-      "z": "-50045.2"
+      "z": "-50045.2",
+      "gameName": "luga"
     },
     {
       "realName": "Mažeikiai",
       "x": "39434.4",
-      "z": "-32809.6"
+      "z": "-32809.6",
+      "gameName": "mazeikiai"
     },
     {
       "realName": "Naantali",
       "x": "35110.2",
-      "z": "-56362.4"
+      "z": "-56362.4",
+      "gameName": "naantali"
     },
     {
       "realName": "Narva",
       "x": "54382.2",
-      "z": "-52462.3"
+      "z": "-52462.3",
+      "gameName": "narva"
     },
     {
       "realName": "Olkiluoto",
       "x": "34255.3",
-      "z": "-60008.2"
+      "z": "-60008.2",
+      "gameName": "olkiluoto"
     },
     {
       "realName": "Paldiski",
       "x": "42570",
-      "z": "-50011.9"
+      "z": "-50011.9",
+      "gameName": "paldiski"
     },
     {
       "realName": "Panevėžys",
       "x": "46202.3",
-      "z": "-29962.8"
+      "z": "-29962.8",
+      "gameName": "panevezys"
     },
     {
       "realName": "Pärnu",
       "x": "44626.8",
-      "z": "-45237.7"
+      "z": "-45237.7",
+      "gameName": "parnu"
     },
     {
       "realName": "Санкт-Петербург",
       "x": "59773.8",
-      "z": "-57040.6"
+      "z": "-57040.6",
+      "gameName": "petersburg"
     },
     {
       "realName": "Pori",
       "x": "34862.3",
-      "z": "-61707.6"
+      "z": "-61707.6",
+      "gameName": "pori"
     },
     {
       "realName": "Псков",
       "x": "56968.3",
-      "z": "-44002.4"
+      "z": "-44002.4",
+      "gameName": "pskov"
     },
     {
       "realName": "Rēzekne",
       "x": "54953.4",
-      "z": "-36075.6"
+      "z": "-36075.6",
+      "gameName": "rezekne"
     },
     {
       "realName": "Rīga",
       "x": "44678",
-      "z": "-37089.7"
+      "z": "-37089.7",
+      "gameName": "riga"
     },
     {
       "realName": "Šiauliai",
       "x": "43188.8",
-      "z": "-30503.8"
+      "z": "-30503.8",
+      "gameName": "siauliai"
     },
     {
       "realName": "Сосновый Бор",
       "x": "54949.1",
-      "z": "-54394.3"
+      "z": "-54394.3",
+      "gameName": "sosnovy_bor"
     },
     {
       "realName": "Tallinn",
       "x": "44388.5",
-      "z": "-50868.6"
+      "z": "-50868.6",
+      "gameName": "tallinn"
     },
     {
       "realName": "Tampere",
       "x": "40238.8",
-      "z": "-62490.7"
+      "z": "-62490.7",
+      "gameName": "tampere"
     },
     {
       "realName": "Tartu",
       "x": "50958",
-      "z": "-46408"
+      "z": "-46408",
+      "gameName": "tartu"
     },
     {
       "realName": "Turku",
       "x": "36697.8",
-      "z": "-56006"
+      "z": "-56006",
+      "gameName": "turku"
     },
     {
       "realName": "Utena",
       "x": "50778.2",
-      "z": "-29540.4"
+      "z": "-29540.4",
+      "gameName": "utena"
     },
     {
       "realName": "Valmiera",
       "x": "47973.1",
-      "z": "-40783.7"
+      "z": "-40783.7",
+      "gameName": "valmiera"
     },
     {
       "realName": "Ventspils",
       "x": "36679.7",
-      "z": "-38562"
+      "z": "-38562",
+      "gameName": "ventspils"
     },
     {
       "realName": "Vilnius",
       "x": "50562.6",
-      "z": "-24885.7"
+      "z": "-24885.7",
+      "gameName": "vilnius"
     },
     {
       "realName": "Выборг",
       "x": "54465.3",
-      "z": "-60221.8"
+      "z": "-60221.8",
+      "gameName": "vyborg"
     },
     {
       "realName": "Bacău",
       "x": "62137.4",
-      "z": "18494"
+      "z": "18494",
+      "gameName": "bacau"
     },
     {
       "realName": "Brașov",
       "x": "58252.4",
-      "z": "23552.8"
+      "z": "23552.8",
+      "gameName": "brasov"
     },
     {
       "realName": "București",
       "x": "61121",
-      "z": "31703.6"
+      "z": "31703.6",
+      "gameName": "bucuresti"
     },
     {
       "realName": "Бургас",
       "x": "68297.2",
-      "z": "40880.7"
+      "z": "40880.7",
+      "gameName": "burgas"
     },
     {
       "realName": "Călărași",
       "x": "66074.6",
-      "z": "31257.8"
+      "z": "31257.8",
+      "gameName": "calarasi"
     },
     {
       "realName": "Cernavodă",
       "x": "69579.5",
-      "z": "30015.4"
+      "z": "30015.4",
+      "gameName": "cernavoda"
     },
     {
       "realName": "Cluj-Napoca",
       "x": "50303.3",
-      "z": "18277.2"
+      "z": "18277.2",
+      "gameName": "cluj_napoca"
     },
     {
       "realName": "Constanța",
       "x": "71731.7",
-      "z": "30870.9"
+      "z": "30870.9",
+      "gameName": "constanta"
     },
     {
       "realName": "Craiova",
       "x": "51918.5",
-      "z": "33228.5"
+      "z": "33228.5",
+      "gameName": "craiova"
     },
     {
       "realName": "Edirne",
       "x": "65096",
-      "z": "46829.2"
+      "z": "46829.2",
+      "gameName": "edirne"
     },
     {
       "realName": "Galați",
       "x": "67046.2",
-      "z": "24473"
+      "z": "24473",
+      "gameName": "galati"
     },
     {
       "realName": "Hunedoara",
       "x": "49016.9",
-      "z": "26114.8"
+      "z": "26114.8",
+      "gameName": "hunedoara"
     },
     {
       "realName": "Iași",
       "x": "64746.4",
-      "z": "14963.9"
+      "z": "14963.9",
+      "gameName": "iasi"
     },
     {
       "realName": "İstanbul",
       "x": "75753.5",
-      "z": "47644"
+      "z": "47644",
+      "gameName": "istanbul"
     },
     {
       "realName": "Карлово",
       "x": "58056.4",
-      "z": "42057.7"
+      "z": "42057.7",
+      "gameName": "karlovo"
     },
     {
       "realName": "Козлодуй",
       "x": "52658.2",
-      "z": "36247.3"
+      "z": "36247.3",
+      "gameName": "kozloduy"
     },
     {
       "realName": "Mangalia",
       "x": "71577.7",
-      "z": "33330.9"
+      "z": "33330.9",
+      "gameName": "mangalia"
     },
     {
       "realName": "Перник",
       "x": "48351.3",
-      "z": "45310.5"
+      "z": "45310.5",
+      "gameName": "pernik"
     },
     {
       "realName": "Пирдоп",
       "x": "55937.9",
-      "z": "42161.1"
+      "z": "42161.1",
+      "gameName": "pirdop"
     },
     {
       "realName": "Pitești",
       "x": "56247.5",
-      "z": "29912.5"
+      "z": "29912.5",
+      "gameName": "pitesti"
     },
     {
       "realName": "Плевен",
       "x": "57594.6",
-      "z": "37457.6"
+      "z": "37457.6",
+      "gameName": "pleven"
     },
     {
       "realName": "Пловдив",
       "x": "58234.8",
-      "z": "46169.4"
+      "z": "46169.4",
+      "gameName": "plovdiv"
     },
     {
       "realName": "Reșița",
       "x": "43990.4",
-      "z": "29154.6"
+      "z": "29154.6",
+      "gameName": "resita"
     },
     {
       "realName": "Русе",
       "x": "61454",
-      "z": "35069.8"
+      "z": "35069.8",
+      "gameName": "ruse"
     },
     {
       "realName": "Со́фия",
       "x": "51154.8",
-      "z": "42490.6"
+      "z": "42490.6",
+      "gameName": "sofia"
     },
     {
       "realName": "Târgu Mureș",
       "x": "53959.7",
-      "z": "20157.2"
+      "z": "20157.2",
+      "gameName": "targu_mures"
     },
     {
       "realName": "Tekirdağ",
       "x": "68590.5",
-      "z": "49762.8"
+      "z": "49762.8",
+      "gameName": "tekirdag"
     },
     {
       "realName": "Timișoara",
       "x": "41402.3",
-      "z": "27128"
+      "z": "27128",
+      "gameName": "timisoara"
     },
     {
       "realName": "Варна",
       "x": "70143.4",
-      "z": "36462.2"
+      "z": "36462.2",
+      "gameName": "varna"
     },
     {
       "realName": "Велико Търново",
       "x": "60763.4",
-      "z": "38859.5"
+      "z": "38859.5",
+      "gameName": "veli_tarnovo"
     },
     {
       "realName": "Ajaccio",
       "x": "-10031.5",
-      "z": "48620.9"
+      "z": "48620.9",
+      "gameName": "ajaccio"
     },
     {
       "realName": "Bastia",
       "x": "-7139.55",
-      "z": "44186.3"
+      "z": "44186.3",
+      "gameName": "bastia"
     },
     {
       "realName": "Bonifacio",
       "x": "-8469.77",
-      "z": "52254.9"
+      "z": "52254.9",
+      "gameName": "bonifacio"
     },
     {
       "realName": "Calvi",
       "x": "-10035.8",
-      "z": "46017.5"
+      "z": "46017.5",
+      "gameName": "calvi"
     },
     {
       "realName": "L'Île-Rousse",
       "x": "-8914.71",
-      "z": "44676.3"
+      "z": "44676.3",
+      "gameName": "lile_rousse"
     },
     {
       "realName": "Porto-Vecchio",
       "x": "-7626.54",
-      "z": "51010.2"
+      "z": "51010.2",
+      "gameName": "porto_vecchi"
     }
   ]
 }

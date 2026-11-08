@@ -5,11 +5,16 @@ using System.Text.Json;
 namespace Ets2DiscordPresence;
 
 internal sealed record PresenceText(string Details, string State);
+internal sealed record MapCity(string Name, double X, double Z, string? Id);
 
 internal sealed class CityLookup
 {
-    private readonly List<City> cities;
-    private sealed record City(string Name, double X, double Z);
+    private readonly List<MapCity> cities;
+    public IReadOnlyList<MapCity> Cities => cities;
+    public MapCity? FindDestination(string name, string? id) =>
+        (string.IsNullOrWhiteSpace(id) ? null : cities.Find(city => string.Equals(city.Id, id, StringComparison.OrdinalIgnoreCase)))
+        ?? cities.Find(city => CultureInfo.CurrentCulture.CompareInfo.Compare(city.Name, name,
+            CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace) == 0);
 
     public CityLookup(Stream source)
     {
@@ -17,16 +22,22 @@ internal sealed class CityLookup
         using var document = JsonDocument.Parse(source);
         foreach (var item in document.RootElement.GetProperty("citiesList").EnumerateArray())
         {
-            if (double.TryParse(item.GetProperty("x").GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
-                && double.TryParse(item.GetProperty("z").GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var z))
-                cities.Add(new City(item.GetProperty("realName").GetString() ?? "", x, z));
+            var name = item.GetProperty("realName").GetString();
+            if (!string.IsNullOrWhiteSpace(name) && TryCoordinate(item.GetProperty("x"), out var x)
+                && TryCoordinate(item.GetProperty("z"), out var z))
+                cities.Add(new MapCity(name.Trim(), x, z, item.TryGetProperty("gameName", out var id) ? id.GetString() : null));
         }
+        if (cities.Count == 0 || cities.Count > 20_000) throw new InvalidDataException("Catálogo de ciudades vacío o demasiado grande.");
     }
+
+    private static bool TryCoordinate(JsonElement value, out double number) =>
+        double.TryParse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+        && double.IsFinite(number) && Math.Abs(number) <= 2_000_000;
 
     public string? FindNearby(double x, double z)
     {
         if (!double.IsFinite(x) || !double.IsFinite(z) || cities.Count == 0) return null;
-        City? nearest = null;
+        MapCity? nearest = null;
         var distanceSquared = 8000.0 * 8000.0;
         foreach (var city in cities)
         {
@@ -43,28 +54,35 @@ internal sealed class CityLookup
 
 internal static class PresenceFormatter
 {
+    public static readonly string[] Fields = ["cargo", "route", "city", "distance"];
+
+    public static string[] Order(AppSettings settings) =>
+        (settings.PresenceOrder ?? (settings.RouteFirst ? ["route", "cargo", "city", "distance"] : Fields))
+            .Where(Fields.Contains).Concat(Fields).Distinct().ToArray();
+
     public static PresenceText Format(TelemetrySnapshot data, string? city, AppSettings? settings = null)
     {
         settings ??= new AppSettings();
-        if (data.Paused) return new PresenceText("Juego en pausa", "Euro Truck Simulator 2");
-        var location = city is null || !settings.ShowCity ? null : $"Cerca de {city}";
+        var english = settings.DiscordLanguage == "en";
+        string T(string es, string en) => english ? en : es;
+        if (data.Paused) return new PresenceText(T("Juego en pausa", "Game paused"), "Euro Truck Simulator 2");
+        var location = city is null || !settings.ShowCity ? null : T($"Cerca de {city}", $"Near {city}");
         var distance = settings.ShowDistance && data.RemainingKm is { } km
-            ? $"{Math.Ceiling(km)} km restantes" : null;
-        if (!data.OnJob)
-            return new PresenceText("Explorando libremente", Limit(Join(location, distance) ?? "Conduciendo por Europa"));
-
-        var cargo = settings.ShowCargo && !string.IsNullOrWhiteSpace(data.Cargo) ? $"Entregando {data.Cargo}" : null;
-        var route = settings.ShowRoute && !string.IsNullOrWhiteSpace(data.SourceCity) && !string.IsNullOrWhiteSpace(data.DestinationCity)
+            ? T($"{Math.Ceiling(km)} km restantes", $"{Math.Ceiling(km)} km remaining") : null;
+        var cargo = data.OnJob && settings.ShowCargo && !string.IsNullOrWhiteSpace(data.Cargo)
+            ? T($"Entregando {data.Cargo}", $"Delivering {data.Cargo}") : null;
+        var route = data.OnJob && settings.ShowRoute && !string.IsNullOrWhiteSpace(data.SourceCity) && !string.IsNullOrWhiteSpace(data.DestinationCity)
             ? $"{data.SourceCity} → {data.DestinationCity}" : null;
-        if (settings.RouteFirst && route is not null)
-            return new PresenceText(Limit(route), Limit(Join(cargo, location, distance) ?? "Entrega en curso"));
-        return new PresenceText(Limit(cargo ?? "Entrega en curso"), Limit(Join(route, location, distance) ?? "Euro Truck Simulator 2"));
-    }
-
-    private static string? Join(params string?[] fields)
-    {
-        var result = string.Join(" · ", fields.OfType<string>());
-        return result.Length == 0 ? null : result;
+        var fields = Order(settings).Select(key => key switch
+        {
+            "cargo" => cargo, "route" => route, "city" => location, "distance" => distance, _ => null
+        }).OfType<string>().ToArray();
+        if (!data.OnJob)
+            return new PresenceText(T("Explorando libremente", "Free roaming"),
+                Limit(fields.Length > 0 ? string.Join(" · ", fields) : T("Conduciendo por Europa", "Driving across Europe")));
+        var details = fields.FirstOrDefault() ?? T("Entrega en curso", "Delivery in progress");
+        return new PresenceText(Limit(details), Limit(fields.Length > 1 ? string.Join(" · ", fields.Skip(1))
+            : "Euro Truck Simulator 2"));
     }
 
     private static string Limit(string text)

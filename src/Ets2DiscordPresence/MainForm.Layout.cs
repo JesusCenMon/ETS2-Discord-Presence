@@ -34,14 +34,18 @@ internal sealed partial class MainForm
     private readonly Button updateButton = MakeButton("↓  Descargar actualización");
     private readonly Panel scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly TableLayoutPanel body = Grid(2);
+    private readonly TableLayoutPanel side = Grid(1);
+    private readonly TableLayoutPanel tripPanel = Grid(1);
     private readonly TableLayoutPanel travel = Grid(1);
     private readonly TableLayoutPanel preview = Grid(1);
     private readonly TableLayoutPanel route = Grid(3);
     private readonly TableLayoutPanel progressArea = Grid(1);
+    private readonly TableLayoutPanel metrics = Grid(2);
     private readonly TableLayoutPanel connections = Grid(2);
     private readonly RoadArtwork artwork = new();
     private bool? stacked;
     private bool? compactLayout;
+    private bool? artworkVisible;
 
     private void BuildLayout()
     {
@@ -57,7 +61,7 @@ internal sealed partial class MainForm
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         header.Controls.Add(TextLabel("ETS2 Discord Presence", 17, true), 0, 0);
-        header.Controls.Add(settingsButton, 1, 0);
+        header.Controls.Add(Translate(settingsButton, "⚙ Ajustes", "⚙ Settings"), 1, 0);
         shell.Controls.Add(header, 0, 0);
         shell.Controls.Add(scroll, 0, 1);
 
@@ -70,33 +74,32 @@ internal sealed partial class MainForm
         travel.Padding = new Padding(18, 14, 18, 14);
         travel.Margin = new Padding(0, 0, 0, 12);
         travelMode.ForeColor = Mint;
-        AddRows(travel, travelMode, cargo);
+        AddRows(travel, travelMode, cargo, timeline);
         route.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
         route.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 6));
         route.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
         route.Margin = new Padding(0, 12, 0, 8);
-        route.Controls.Add(Metric("ORIGEN", origin), 0, 0);
+        route.Controls.Add(Metric("ORIGEN", "ORIGIN", origin), 0, 0);
         var arrow = TextLabel("→", 13, true);
         arrow.TextAlign = ContentAlignment.MiddleCenter;
         route.Controls.Add(arrow, 1, 0);
-        route.Controls.Add(Metric("DESTINO", destination), 2, 0);
+        route.Controls.Add(Metric("DESTINO", "DESTINATION", destination), 2, 0);
         AddRows(travel, route, cityLabel);
 
-        var metrics = Grid(2);
         metrics.Margin = new Padding(0, 13, 0, 0);
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        metrics.Controls.Add(Metric("DISTANCIA RESTANTE", distance), 0, 0);
-        metrics.Controls.Add(Metric("LLEGADA · HORA DEL JUEGO", arrival), 1, 0);
+        metrics.Controls.Add(Metric("DISTANCIA RESTANTE", "REMAINING DISTANCE", distance), 0, 0);
+        metrics.Controls.Add(Metric("LLEGADA · HORA DEL JUEGO", "ARRIVAL · GAME TIME", arrival), 1, 0);
         AddRows(travel, metrics);
         progressArea.Margin = new Padding(0, 8, 0, 0);
         AddRows(progressArea, progressCaption, progress);
-        AddRows(travel, progressArea);
+        AddRows(travel, progressArea, deadlineAlert);
 
         preview.BackColor = Surface;
         preview.Padding = new Padding(16, 10, 16, 9);
         preview.Margin = new Padding(0, 0, 0, 12);
-        var previewTitle = TextLabel("VISTA PREVIA EN DISCORD", 9, true);
+        var previewTitle = UiLabel("VISTA PREVIA EN DISCORD", "DISCORD PREVIEW", 9, true);
         previewTitle.ForeColor = Mint;
         AddRows(preview, previewTitle, previewName, details, state);
 
@@ -113,19 +116,32 @@ internal sealed partial class MainForm
         connections.Controls.Add(discordStatus, 1, 0);
 
         var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true, Margin = Padding.Empty };
-        actions.Controls.AddRange([toggle, launch, locate, updateButton]);
+        actions.Controls.AddRange([toggle, Translate(launch, "▶ Abrir ETS2", "▶ Launch ETS2"),
+            Translate(locate, "Buscar ETS2", "Locate ETS2"), updateButton,
+            Translate(historyButton, "Historial", "History"), Translate(monitorButton, "Segundo monitor", "Second monitor"),
+            Translate(summaryButton, "Ver resumen", "View summary"), Translate(dismissGuide, "Ocultar guía", "Hide guide")]);
+        historyButton.Click += (_, _) => ShowHistory();
+        monitorButton.Click += (_, _) => ToggleMonitor();
+        summaryButton.Click += (_, _) => { if (completedTrip is { } entry) ShowSummary(entry, this); };
+        dismissGuide.Click += (_, _) => SavePreferences(preferences with { GuideDismissed = true });
         locate.Visible = false;
         updateButton.Visible = false;
 
-        var panel = Grid(1);
-        panel.Name = "tripPanel";
-        AddRows(panel, travel, connections, guidance, actions, preview);
-        body.Controls.Add(panel, 0, 0);
+        AddRows(tripPanel, travel, connections, guidance, onboarding, actions, preview, tripMap, finishBanner);
+        panelSections.Add("trip", travel);
+        panelSections.Add("discord", preview);
+        panelSections.Add("map", tripMap);
+        panelSections.Add("art", artwork);
+        body.Controls.Add(tripPanel, 0, 0);
 
-        artwork.Dock = DockStyle.Fill;
-        artwork.Margin = new Padding(14, 0, 0, 0);
+        artwork.Dock = DockStyle.Top;
+        artwork.Margin = new Padding(0, 10, 0, 0);
         artwork.MinimumSize = new Size(0, 145);
-        body.Controls.Add(artwork, 1, 0);
+        side.Margin = new Padding(14, 0, 0, 0);
+        side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        side.Controls.Add(artwork, 0, 1);
+        body.Controls.Add(side, 1, 0);
         scroll.ClientSizeChanged += (_, _) => ArrangeLayout();
         ArrangeLayout();
     }
@@ -134,26 +150,40 @@ internal sealed partial class MainForm
     {
         if (body.Controls.Count < 2) return;
         var scale = DeviceDpi / 96f;
-        var compact = preferences.Compact;
+        var compact = preferences.Compact && !fullScreen;
+        var showArtwork = !compact && !fullScreen && preferences.HiddenPanels?.Contains("art") != true;
         var narrow = scroll.ClientSize.Width / scale < 790;
-        if (stacked != narrow || compactLayout != compact)
+        var mapAtSide = !narrow && !compact && !fullScreen && preferences.PanelOrder is null
+            && preferences.HiddenPanels?.Contains("map") != true;
+        var hasSide = showArtwork || mapAtSide;
+        var mapWasAtSide = tripMap.Parent == side;
+        if (stacked != narrow || compactLayout != compact || artworkVisible != hasSide || mapWasAtSide != mapAtSide)
         {
             stacked = narrow;
             compactLayout = compact;
+            artworkVisible = hasSide;
             body.SuspendLayout();
-            body.ColumnStyles[0].Width = narrow || compact ? 100 : 70;
-            body.ColumnStyles[1].Width = narrow || compact ? 0 : 30;
-            body.SetCellPosition(artwork, narrow || compact ? new TableLayoutPanelCellPosition(0, 1) : new(1, 0));
-            artwork.Dock = narrow ? DockStyle.Top : DockStyle.Fill;
-            artwork.Height = (int)(150 * scale);
-            artwork.Margin = narrow ? new Padding(0, 4, 0, 0) : new Padding(14, 0, 0, 0);
-            artwork.Visible = !compact;
-            preview.Visible = !compact;
+            body.ColumnStyles[0].Width = narrow || !hasSide ? 100 : 67;
+            body.ColumnStyles[1].Width = narrow || !hasSide ? 0 : 33;
+            body.SetCellPosition(side, narrow || !hasSide ? new TableLayoutPanelCellPosition(0, 1) : new(1, 0));
+            side.Margin = narrow ? new Padding(0, 4, 0, 0) : new Padding(14, 0, 0, 0);
+            artwork.Height = (int)((narrow ? 150 : 285) * scale);
+            side.Visible = hasSide;
+            if (mapAtSide)
+            {
+                side.Controls.Add(tripMap, 0, 0);
+            }
+            else if (tripMap.Parent == side)
+            {
+                tripPanel.Controls.Add(tripMap, 0, 6);
+            }
+            OrderTripPanels();
             body.ResumeLayout(true);
         }
+        artwork.Visible = showArtwork;
 
         var width = Math.Max(220, scroll.ClientSize.Width - body.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
-        if (!narrow && !compact) width = (int)(width * .70);
+        if (!narrow && hasSide) width = (int)(width * .67);
         SetWrap(cargo, width - travel.Padding.Horizontal);
         SetWrap(cityLabel, width - travel.Padding.Horizontal);
         SetWrap(origin, (int)((width - travel.Padding.Horizontal) * .45));
@@ -161,6 +191,10 @@ internal sealed partial class MainForm
         SetWrap(state, width - preview.Padding.Horizontal);
         SetWrap(details, width - preview.Padding.Horizontal);
         SetWrap(guidance, width);
+        SetWrap(onboarding, width);
+        SetWrap(timeline, width - travel.Padding.Horizontal);
+        SetWrap(deadlineAlert, width - travel.Padding.Horizontal);
+        SetWrap(finishBanner, width);
         SetWrap(discordStatus, width / 2 - 12);
         SetWrap(gameStatus, width / 2 - 12);
     }
@@ -182,39 +216,42 @@ internal sealed partial class MainForm
 
     private void RenderTrip(TelemetrySnapshot? trip, string? nearby, PresenceText? presence)
     {
-        travelMode.Text = trip is null ? "SIN VIAJE ACTIVO" : trip.Paused ? "JUEGO EN PAUSA"
-            : trip.OnJob ? "ENTREGA EN CURSO" : "CONDUCCIÓN LIBRE";
-        travelMode.ForeColor = trip is null || trip.Paused ? Amber : Mint;
-        cargo.Text = trip is null ? "Esperando una partida"
-            : trip.OnJob ? (string.IsNullOrWhiteSpace(trip.Cargo) ? "Entrega sin nombre de carga" : trip.Cargo)
-            : "Explorando el mapa";
-        route.Visible = trip?.OnJob == true;
+        travelMode.Text = trip is null ? L("SIN VIAJE ACTIVO", "NO ACTIVE TRIP") : trip.Paused ? L("JUEGO EN PAUSA", "GAME PAUSED")
+            : trip.OnJob ? L("ENTREGA EN CURSO", "DELIVERY IN PROGRESS") : L("CONDUCCIÓN LIBRE", "FREE ROAM");
+        travelMode.ForeColor = Themed(trip is null || trip.Paused ? Amber : Mint);
+        cargo.Text = trip is null ? L("Esperando una partida", "Waiting for a game session")
+            : trip.OnJob ? (string.IsNullOrWhiteSpace(trip.Cargo) ? L("Entrega sin nombre de carga", "Delivery without cargo name") : trip.Cargo)
+            : L("Explorando el mapa", "Exploring the map");
+        cargo.Visible = preferences.HiddenPanels?.Contains("cargo") != true;
+        route.Visible = trip?.OnJob == true && preferences.HiddenPanels?.Contains("route") != true;
+        cityLabel.Visible = preferences.HiddenPanels?.Contains("location") != true;
+        metrics.Visible = preferences.HiddenPanels?.Contains("metrics") != true;
         origin.Text = string.IsNullOrWhiteSpace(trip?.SourceCity) ? "—" : trip.SourceCity;
         destination.Text = string.IsNullOrWhiteSpace(trip?.DestinationCity) ? "—" : trip.DestinationCity;
-        cityLabel.Text = nearby is null ? "Ubicación aproximada · No disponible" : $"Ubicación aproximada · Cerca de {nearby}";
+        cityLabel.Text = nearby is null ? L("Ubicación aproximada · No disponible", "Approximate location · Unavailable") : L($"Ubicación aproximada · Cerca de {nearby}", $"Approximate location · Near {nearby}");
         distance.Text = trip?.RemainingKm is { } km ? $"{Math.Ceiling(km):N0} km" : "—";
         arrival.Text = trip?.ArrivalTime ?? "—";
         var percent = trip?.Progress;
-        progressArea.Visible = percent.HasValue;
+        progressArea.Visible = percent.HasValue && preferences.HiddenPanels?.Contains("metrics") != true;
         progress.SetValue(percent ?? 0);
-        progressCaption.Text = percent.HasValue ? $"Progreso estimado · {percent} %" : "";
-        previewName.Text = demo ? "ETS2 Presence · Ejemplo local" : "ETS2 Presence";
-        details.Text = demo || preferences.Sharing ? presence?.Details ?? "Sin actividad para publicar" : "Publicación en pausa";
-        state.Text = demo || preferences.Sharing ? presence?.State ?? "Entra a una partida para ver la actividad."
-            : "El viaje se sigue mostrando en el panel.";
+        progressCaption.Text = percent.HasValue ? L($"Progreso estimado · {percent} %", $"Estimated progress · {percent}%") : "";
+        previewName.Text = demo ? L("ETS2 Presence · Ejemplo local", "ETS2 Presence · Local example") : "ETS2 Presence";
+        details.Text = demo || preferences.Sharing ? presence?.Details ?? L("Sin actividad para publicar", "No activity to publish") : L("Publicación en pausa", "Publishing paused");
+        state.Text = demo || preferences.Sharing ? presence?.State ?? L("Entra a una partida para ver la actividad.", "Enter a game session to see the activity.")
+            : L("El viaje se sigue mostrando en el panel.", "The trip is still visible on the dashboard.");
     }
 
-    private static TableLayoutPanel Metric(string caption, Label value)
+    private TableLayoutPanel Metric(string caption, string translation, Label value)
     {
         var metric = Grid(1);
-        AddRows(metric, TextLabel(caption, 9, true), value);
+        AddRows(metric, UiLabel(caption, translation, 9, true), value);
         return metric;
     }
 
-    private static void SetStatus(Label label, string text, bool active)
+    private void SetStatus(Label label, string text, bool active)
     {
         label.Text = $"●  {text}";
-        label.ForeColor = active ? Mint : Amber;
+        label.ForeColor = Themed(active ? Mint : Amber);
     }
 
     private static TableLayoutPanel Grid(int columns) => new()
@@ -269,8 +306,9 @@ internal sealed partial class MainForm
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            e.Graphics.Clear(Background);
-            using var fill = new SolidBrush(Mint);
+            var form = FindForm() as MainForm;
+            e.Graphics.Clear(form?.Themed(Background) ?? Background);
+            using var fill = new SolidBrush(form?.Themed(Mint) ?? Mint);
             e.Graphics.FillRectangle(fill, 0, 0, Width * value / 100f, Height);
         }
     }

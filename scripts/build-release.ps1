@@ -5,6 +5,10 @@ $exePath = Join-Path $publishDir 'ETS2DiscordPresence.exe'
 $identity = Get-Content -Raw (Join-Path $projectRoot 'src/Ets2DiscordPresence/DiscordIdentity.cs')
 if ($identity -notmatch 'ApplicationId = "[0-9]{17,20}"') { throw 'Falta registrar la aplicación de Discord antes de crear una versión para jugadores.' }
 
+dotnet test (Join-Path $projectRoot 'tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj') `
+    -c Release --artifacts-path (Join-Path $projectRoot 'dist/verification')
+if ($LASTEXITCODE -ne 0) { throw 'Falló la verificación previa a la publicación.' }
+
 dotnet publish (Join-Path $projectRoot 'src/Ets2DiscordPresence/Ets2DiscordPresence.csproj') `
     -c Release -r win-x64 --self-contained true `
     /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true `

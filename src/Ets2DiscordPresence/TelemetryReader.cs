@@ -6,7 +6,8 @@ namespace Ets2DiscordPresence;
 internal sealed record TelemetrySnapshot(
     bool Paused, bool OnJob, string Cargo, string SourceCity, string DestinationCity,
     double X, double Z, float RouteDistanceMeters, uint PluginRevision,
-    ulong RenderTime = 0, uint GameMinutes = 0, float RouteSeconds = 0, uint PlannedDistanceKm = 0)
+    ulong RenderTime = 0, uint GameMinutes = 0, float RouteSeconds = 0, uint PlannedDistanceKm = 0,
+    TripSignals? Signals = null)
 {
     public double? RemainingKm => float.IsFinite(RouteDistanceMeters) && RouteDistanceMeters > 0
         ? RouteDistanceMeters / 1000d : null;
@@ -19,6 +20,10 @@ internal sealed record TelemetrySnapshot(
         ? TimeSpan.FromMinutes((GameMinutes + Math.Ceiling(RouteSeconds / 60d)) % 1440).ToString(@"hh\:mm")
         : null;
 }
+
+internal sealed record TripSignals(uint Deadline, uint FinishedAt, bool Delivered, bool Cancelled,
+    bool Loaded, bool Ferry, bool Refueling, bool ParkBrake, float Speed, float Odometer,
+    int RestMinutes, float DeliveredKm, string JobKey, string DestinationId = "");
 
 internal static class TelemetryReader
 {
@@ -85,7 +90,20 @@ internal static class TelemetryReader
             RenderTime: BitConverter.ToUInt64(data.Slice(24, 8)),
             GameMinutes: BitConverter.ToUInt32(data.Slice(64, 4)),
             RouteSeconds: BitConverter.ToSingle(data.Slice(1064, 4)),
-            PlannedDistanceKm: BitConverter.ToUInt32(data.Slice(100, 4)));
+            PlannedDistanceKm: BitConverter.ToUInt32(data.Slice(100, 4)),
+            Signals: new TripSignals(
+                Deadline: BitConverter.ToUInt32(data.Slice(88, 4)),
+                FinishedAt: BitConverter.ToUInt32(data.Slice(448, 4)),
+                Delivered: data[4303] != 0, Cancelled: data[4302] != 0,
+                Loaded: data[1564] != 0, Ferry: data[4306] != 0, Refueling: data[4308] != 0,
+                ParkBrake: data[1566] != 0,
+                Speed: BitConverter.ToSingle(data.Slice(948, 4)),
+                Odometer: BitConverter.ToSingle(data.Slice(1056, 4)),
+                RestMinutes: BitConverter.ToInt32(data.Slice(500, 4)),
+                DeliveredKm: BitConverter.ToSingle(data.Slice(1460, 4)),
+                JobKey: string.Join("|", ReadString(data, 2556, 64), ReadString(data, 2940, 64),
+                    ReadString(data, 3068, 64), ReadString(data, 2684, 64), ReadString(data, 2812, 64)),
+                DestinationId: ReadString(data, 2684, 64)));
     }
 
     private static string ReadString(ReadOnlySpan<byte> data, int offset, int length)

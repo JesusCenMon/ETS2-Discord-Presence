@@ -19,7 +19,15 @@ Puedes minimizar la aplicación y recuperarla desde el icono junto al reloj. Si 
 - En pausa: indica que el juego está en pausa.
 - El panel muestra la llegada estimada según el reloj de ETS2 y el progreso cuando el juego facilita una ruta y una distancia planificada. Un cambio de destino en el navegador del juego puede cambiar la estimación.
 
-En **Ajustes** puedes elegir los datos visibles en Discord, dar prioridad a la ruta, activar la vista compacta o probar una demostración local. La pausa se guarda y también se controla desde la bandeja de Windows. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, vuelve a activar esa opción desde su nueva ubicación.
+En **Ajustes** puedes ordenar los datos de Discord y previsualizarlos, guardar un perfil de publicación, elegir el idioma del panel y de la actividad por separado y cambiar el tema. También puedes ordenar los paneles, elegir cuáles mostrar y activar la vista compacta. **Segundo monitor** mueve el panel a otra pantalla si hay una disponible. Usa Escape para volver a la ventana.
+
+El mapa muestra posiciones aproximadas, el destino y el recorrido observado durante la sesión. Puedes importar un catálogo de mapas modificados en **Ajustes → Juego**. El JSON debe contener una lista `citiesList` con los campos `realName`, `x` y `z`. El campo opcional `gameName` permite localizar destinos por su identificador de ETS2.
+
+**Historial** reúne las entregas y cancelaciones detectadas. Guarda los datos en este equipo, permite filtrar por ciudad o fechas y exporta el resultado a CSV. Las horas al volante se calculan a partir de las muestras observadas y las etapas de recogida, llegada y descanso pueden ser aproximadas.
+
+En **Ajustes → Juego** puedes grabar telemetría local y reproducir un archivo JSONL. La reproducción se muestra en el panel sin publicar actividad en Discord. El mismo menú permite reparar o retirar el lector con ETS2 cerrado.
+
+La pausa se guarda y también se controla desde la bandeja de Windows. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
 
 Al abrir la app se comprueba si hay una versión más reciente en GitHub. El botón de actualización abre la descarga del ejecutable.
 
@@ -31,7 +39,7 @@ La actividad aparece como **ETS2 Presence** en Discord. El título oficial detec
 - **No aparece la actividad:** abre Discord de escritorio y revisa que «Compartir mi actividad» esté activado.
 - **La aplicación espera datos:** entra a una partida. Si acabas de abrir la app por primera vez con ETS2 ya iniciado, reinicia el juego y acepta su aviso de SDK si aparece.
 - **Ciudad incorrecta:** la ubicación es aproximada y la lista no cubre todos los DLC ni mapas externos.
-- **Lector incompatible:** sigue la indicación del panel y usa **Reintentar preparación** en Ajustes. Puedes copiar un diagnóstico desde ese menú para reportar el fallo.
+- **Lector incompatible:** sigue la indicación del panel y abre **Ajustes → Juego**. Desde ahí puedes reparar el lector propio o copiar un diagnóstico.
 
 ## Desarrollo
 
@@ -44,7 +52,7 @@ dotnet test tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj -c 
 ./scripts/build-release.ps1
 ```
 
-El archivo listo para compartir queda en `dist/standalone/ETS2DiscordPresence.exe`.
+El script ejecuta las pruebas de reproducción y del lector antes de crear `dist/standalone/ETS2DiscordPresence.exe`.
 
 ## Alcance y créditos
 

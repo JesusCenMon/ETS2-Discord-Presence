@@ -7,7 +7,10 @@ namespace Ets2DiscordPresence;
 
 internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bool ShowCargo = true,
     bool ShowRoute = true, bool ShowCity = true, bool ShowDistance = true,
-    bool RouteFirst = false, bool Compact = false)
+    bool RouteFirst = false, bool Compact = false, string Language = "es", string DiscordLanguage = "es",
+    string Theme = "system", bool GuideDismissed = false, bool ReaderDisabled = false,
+    string? CityCatalog = null, string Profile = "custom", string[]? PresenceOrder = null,
+    string[]? PanelOrder = null, string[]? HiddenPanels = null)
 {
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -71,6 +74,36 @@ internal static class SteamLocator
 internal static class PluginInstaller
 {
     private const string InstalledName = "ets2-discord-telemetry.dll";
+
+    public static void Maintain(string gamePath, bool remove)
+    {
+        if (!SteamLocator.IsValidGamePath(gamePath)) throw new IOException("ETS2 no está localizado.");
+        var destination = Path.Combine(gamePath, "bin", "win_x64", "plugins", InstalledName);
+        if (remove)
+        {
+            using var source = AppResources.Open("rencloud-telemetry.dll");
+            if (!File.Exists(destination)) return;
+            using (var installed = File.OpenRead(destination))
+                if (!SHA256.HashData(installed).AsSpan().SequenceEqual(SHA256.HashData(source)))
+                    throw new IOException("El archivo cambió. Revísalo manualmente para conservar complementos ajenos.");
+            File.Delete(destination);
+            return;
+        }
+
+        if (!File.Exists(destination))
+        {
+            Prepare(gamePath);
+            return;
+        }
+        using var replacement = AppResources.Open("rencloud-telemetry.dll");
+        var temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            using (var output = new FileStream(temporary, FileMode.CreateNew)) replacement.CopyTo(output);
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally { File.Delete(temporary); }
+    }
 
     public static bool Prepare(string gamePath)
     {
