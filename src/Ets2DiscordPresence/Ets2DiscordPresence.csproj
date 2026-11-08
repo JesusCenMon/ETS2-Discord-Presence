@@ -6,10 +6,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ETS2DiscordPresence</AssemblyName>
+    <ApplicationIcon>../../assets/ets2-presence.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
-    <Content Include="../../data/cities_default.json" Link="cities_default.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
-    <Content Include="../../assets/hero-truck.png" Link="hero-truck.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <EmbeddedResource Include="../../data/cities_default.json" LogicalName="cities_default.json" />
+    <EmbeddedResource Include="../../assets/hero-truck.png" LogicalName="hero-truck.png" />
+    <EmbeddedResource Include="../../assets/ets2-presence.ico" LogicalName="ets2-presence.ico" />
+    <EmbeddedResource Include="../../assets/rencloud-telemetry.dll" LogicalName="rencloud-telemetry.dll" />
+    <EmbeddedResource Include="../../assets/RENCLOUD-LICENSE.txt" LogicalName="RENCLOUD-LICENSE.txt" />
+    <EmbeddedResource Include="../../data/CITY-DATA-LICENSE.txt" LogicalName="CITY-DATA-LICENSE.txt" />
   </ItemGroup>
 </Project>

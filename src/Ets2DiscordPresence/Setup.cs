@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -21,7 +19,7 @@ internal sealed record AppSettings(string GamePath)
                 ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) ?? new("")
                 : new("");
         }
-        catch (JsonException) { return new(""); }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(""); }
     }
 
     public void Save()
@@ -60,34 +58,43 @@ internal static class SteamLocator
 
 internal static class PluginInstaller
 {
-    private const string Url = "https://github.com/RenCloud/scs-sdk-plugin/releases/download/V.1.12.1/release_v_1_12_1.zip";
-    private const string ExpectedSha256 = "3679EC81407DE0EBFB45241E496E2AD31E30A6E409EF0246FC86195BFEE9C9A5";
-    private const string ZipEntry = "release_v_1_12_1/Win64/scs-telemetry.dll";
     private const string InstalledName = "ets2-discord-telemetry.dll";
 
-    public static bool IsInstalled(string gamePath) =>
-        File.Exists(Path.Combine(gamePath, "bin", "win_x64", "plugins", InstalledName));
-
-    public static async Task<string> InstallAsync(string gamePath, CancellationToken cancellationToken = default)
+    public static bool Prepare(string gamePath)
     {
         if (!SteamLocator.IsValidGamePath(gamePath)) throw new InvalidOperationException("Selecciona la carpeta correcta de ETS2.");
-        if (Process.GetProcessesByName("eurotrucks2").Length > 0)
-            throw new InvalidOperationException("Cierra ETS2 antes de instalar el componente.");
         var directory = Path.Combine(gamePath, "bin", "win_x64", "plugins");
         var destination = Path.Combine(directory, InstalledName);
-        if (File.Exists(destination)) return "El componente ya está instalado. Abre ETS2.";
+        using var source = AppResources.Open("rencloud-telemetry.dll");
+        var expected = SHA256.HashData(source);
+        source.Position = 0;
+        foreach (var existing in new[] { destination, Path.Combine(directory, "scs-telemetry.dll") })
+        {
+            if (!File.Exists(existing)) continue;
+            using var file = File.OpenRead(existing);
+            if (SHA256.HashData(file).AsSpan().SequenceEqual(expected)) return false;
+            throw new IOException("ETS2 ya tiene un lector de viaje de otra versión. Revisa los complementos del juego.");
+        }
 
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-        var archive = await client.GetByteArrayAsync(Url, cancellationToken);
-        var hash = Convert.ToHexString(SHA256.HashData(archive));
-        if (!hash.Equals(ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("La descarga no pasó la comprobación de integridad.");
-        using var zip = new ZipArchive(new MemoryStream(archive), ZipArchiveMode.Read);
-        var entry = zip.GetEntry(ZipEntry) ?? throw new InvalidDataException("No se encontró el componente en la descarga.");
         Directory.CreateDirectory(directory);
-        await using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write))
-        await using (var input = entry.Open())
-            await input.CopyToAsync(output, cancellationToken);
-        return "Componente instalado. Abre o reinicia ETS2.";
+        var temporary = Path.Combine(directory, $".ets2-presence-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+                source.CopyTo(output);
+            File.Move(temporary, destination);
+            return true;
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
+}
+
+internal static class AppResources
+{
+    public static Stream Open(string name) =>
+        typeof(AppResources).Assembly.GetManifestResourceStream(name)
+        ?? throw new InvalidDataException($"Falta el recurso {name}.");
 }

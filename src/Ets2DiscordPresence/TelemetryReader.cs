@@ -36,7 +36,7 @@ internal static class TelemetryReader
         }
         catch (FileNotFoundException)
         {
-            error = "Abre ETS2 después de instalar el componente de lectura.";
+            error = "Esperando datos de ETS2.";
             return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)

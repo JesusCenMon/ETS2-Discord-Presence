@@ -4,11 +4,10 @@ Muestra en Discord qué estás haciendo en **Euro Truck Simulator 2**: entrega, 
 
 ## Instalar en Windows
 
-1. Descarga `ETS2-Discord-Presence-win-x64.zip` desde [Releases](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases). Descomprímelo y abre `ETS2DiscordPresence.exe`.
-2. La aplicación busca ETS2 en Steam. Pulsa **Instalar componente**. Si el juego está abierto, ciérralo primero.
-3. Abre Discord de escritorio y ETS2. La aplicación intentará conectarse sola. Puedes minimizar la ventana: queda junto al reloj.
+1. Descarga `ETS2DiscordPresence.exe` desde [Releases](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases) y ábrelo directamente.
+2. Abre Discord de escritorio y ETS2. La aplicación encuentra el juego en Steam y prepara la conexión automáticamente.
 
-Después de instalar el componente, la aplicación recuerda dónde está ETS2 y se conecta automáticamente cuando vuelves a abrirla. Si ETS2 está cerrado, la actividad se borra.
+Puedes minimizar la aplicación y recuperarla desde el icono junto al reloj. Si ETS2 ya estaba abierto durante la primera preparación, reinícialo para que empiece a enviar los datos. Acepta el aviso de SDK si ETS2 lo muestra. Si Windows protege la carpeta del juego, la app te indica cómo continuar.
 
 **Aviso:** esta aplicación se distribuye por GitHub. Los mods de ETS2 en Steam Workshop no pueden instalar y ejecutar por sí solos el componente que lee el juego. No es un mod de suscripción automática.
 
@@ -23,9 +22,9 @@ La actividad aparece como **ETS2 Presence** en Discord. El título oficial detec
 
 ## Problemas frecuentes
 
-- **No aparece ETS2:** pulsa «Buscar...» y selecciona la carpeta `Euro Truck Simulator 2` dentro de tu biblioteca de Steam.
+- **No aparece ETS2:** pulsa «Buscar ETS2» y selecciona la carpeta `Euro Truck Simulator 2` dentro de tu biblioteca de Steam.
 - **No aparece la actividad:** abre Discord de escritorio y revisa que «Compartir mi actividad» esté activado.
-- **La aplicación espera datos:** reinicia ETS2 después de instalar el componente. Confirma que aceptaste el aviso de SDK avanzado del juego.
+- **La aplicación espera datos:** entra a una partida. Si acabas de abrir la app por primera vez con ETS2 ya iniciado, reinicia el juego y acepta su aviso de SDK si aparece.
 - **Ciudad incorrecta:** la ubicación es aproximada y la lista no cubre todos los DLC ni mapas externos.
 
 ## Desarrollo
@@ -39,10 +38,10 @@ dotnet test tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj -c 
 ./scripts/build-release.ps1
 ```
 
-El archivo listo para compartir queda en `dist/ETS2-Discord-Presence-win-x64.zip`.
+El archivo listo para compartir queda en `dist/standalone/ETS2DiscordPresence.exe`.
 
 ## Alcance y créditos
 
-La aplicación lee datos locales del juego y se comunica con el cliente local de Discord. No envía telemetría a un servidor propio. La descarga del componente de ETS2 proviene de la [versión V.1.12.1 de RenCloud](https://github.com/RenCloud/scs-sdk-plugin/releases/tag/V.1.12.1), bajo licencia MIT; la aplicación comprueba su huella antes de instalarlo. Los datos de ciudades proceden de [ETS2-City-Coordinate-Retriever](https://github.com/Koenvh1/ETS2-City-Coordinate-Retriever), también bajo licencia MIT; su aviso de licencia está en `data/CITY-DATA-LICENSE.txt`.
+La aplicación lee los datos en el equipo y se comunica con Discord de escritorio. El ejecutable incluye el lector de la [versión V.1.12.1 de RenCloud](https://github.com/RenCloud/scs-sdk-plugin/releases/tag/V.1.12.1) y los datos de [ETS2-City-Coordinate-Retriever](https://github.com/Koenvh1/ETS2-City-Coordinate-Retriever). Sus avisos de licencia están disponibles desde el menú del icono junto al reloj.
 
 Probado mediante compilación y pruebas automáticas; la lectura en una partida real de ETS2 y la visualización en una cuenta de Discord requieren validación en una máquina con el juego y Discord abiertos.

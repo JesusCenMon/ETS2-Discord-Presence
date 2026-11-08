@@ -1,313 +1,351 @@
-using DiscordRPC;
-using System.Drawing;
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using DiscordRPC;
 using Button = System.Windows.Forms.Button;
 
 namespace Ets2DiscordPresence;
 
 internal sealed class MainForm : Form
 {
-    private static readonly Color Back = Color.FromArgb(14, 19, 23);
-    private static readonly Color Side = Color.FromArgb(23, 29, 34);
-    private static readonly Color Card = Color.FromArgb(32, 40, 46);
-    private static readonly Color Muted = Color.FromArgb(184, 197, 201);
-    private static readonly Color Accent = Color.FromArgb(29, 157, 139);
-    private static readonly Color Fore = Color.FromArgb(244, 247, 246);
+    private static readonly Color Background = Color.FromArgb(12, 21, 27);
+    private static readonly Color Surface = Color.FromArgb(21, 35, 43);
+    private static readonly Color Foreground = Color.FromArgb(244, 247, 244);
+    private static readonly Color Muted = Color.FromArgb(168, 190, 195);
+    private static readonly Color Mint = Color.FromArgb(128, 229, 201);
+    private static readonly Color Amber = Color.FromArgb(245, 192, 117);
 
-    private readonly TextBox gamePathBox = new();
-    private readonly Button browseButton = new() { Text = "Buscar" };
-    private readonly Button installButton = new() { Text = "Instalar componente", Height = 46 };
-    private readonly Button startButton = new() { Text = "INICIAR PRESENCIA  →", Height = 52 };
-    private readonly Label statusLabel = new() { Height = 75 };
-    private readonly Label detailsLabel = new() { Height = 56 };
-    private readonly Label stateLabel = new() { Height = 64 };
-    private readonly NotifyIcon trayIcon;
+    private readonly Label gameStatus = TextLabel("Buscando ETS2…", 10);
+    private readonly Label discordStatus = TextLabel("Buscando Discord…", 10);
+    private readonly Label details = TextLabel("Sin viaje activo", 17, bold: true);
+    private readonly Label state = TextLabel("Aquí aparecerá la actividad de tu viaje.", 11);
+    private readonly Label guidance = TextLabel("Preparando la conexión…", 10);
+    private readonly Button toggle = MakeButton("Pausar actividad");
+    private readonly Button locate = MakeButton("Buscar ETS2");
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
+    private readonly DiscordRpcClient discord = new(DiscordIdentity.ApplicationId);
     private readonly CityLookup cities;
-    private DiscordRpcClient? discord;
-    private string? lastPresence;
-    private bool running;
+    private readonly Icon appIcon;
+    private readonly NotifyIcon tray;
+    private readonly ContextMenuStrip trayMenu = new();
+    private PresenceText? lastPresence;
+    private volatile bool discordReady;
+    private bool sharing = true;
+    private bool restartNeeded;
+    private bool gamePrepared;
+    private bool canLocateGame;
+    private string? setupError;
 
     public MainForm()
     {
         Text = "ETS2 Discord Presence";
-        Size = new Size(1360, 820);
-        MinimumSize = new Size(1000, 640);
+        ClientSize = new Size(1030, 600);
+        MinimumSize = new Size(760, 530);
+        AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Segoe UI", 10);
-        BackColor = Back;
-        ForeColor = Fore;
-        var settings = AppSettings.Load();
-        gamePathBox.Text = !string.IsNullOrWhiteSpace(settings.GamePath) ? settings.GamePath : SteamLocator.FindGame() ?? "";
-        cities = new CityLookup(Path.Combine(AppContext.BaseDirectory, "cities_default.json"));
+        BackColor = Background;
+        ForeColor = Foreground;
+        using var iconData = AppResources.Open("ets2-presence.ico");
+        appIcon = new Icon(iconData);
+        Icon = appIcon;
+        using var cityData = AppResources.Open("cities_default.json");
+        cities = new CityLookup(cityData);
         BuildLayout();
 
-        trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = Text, Visible = true };
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Abrir", null, (_, _) => ShowFromTray());
-        menu.Items.Add("Salir", null, (_, _) => Close());
-        trayIcon.ContextMenuStrip = menu;
-        trayIcon.DoubleClick += (_, _) => ShowFromTray();
-        browseButton.Click += (_, _) => BrowseGame();
-        installButton.Click += async (_, _) => await InstallAsync();
-        startButton.Click += (_, _) => { if (running) Stop(); else Start(); };
-        timer.Tick += (_, _) => UpdatePresence();
+        tray = new NotifyIcon { Icon = appIcon, Text = Text, Visible = true, ContextMenuStrip = trayMenu };
+        trayMenu.Items.Add("Abrir panel", null, (_, _) => RestoreWindow());
+        trayMenu.Items.Add("Licencias", null, (_, _) => ShowLicenses());
+        trayMenu.Items.Add("Salir", null, (_, _) => Close());
+        tray.DoubleClick += (_, _) => RestoreWindow();
         Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
-        FormClosed += (_, _) => { Stop(); trayIcon.Visible = false; trayIcon.Dispose(); };
-        UpdateSetupStatus();
-        if (PluginInstaller.IsInstalled(gamePathBox.Text) && IsValidAppId(DiscordIdentity.ApplicationId)) Start();
+        timer.Tick += (_, _) => RefreshPresence();
+        toggle.Click += (_, _) => ToggleSharing();
+        locate.Click += (_, _) => LocateGame();
+        Shown += (_, _) => Start();
+        FormClosed += (_, _) =>
+        {
+            timer.Dispose();
+            discord.Dispose();
+            tray.Dispose();
+            trayMenu.Dispose();
+            appIcon.Dispose();
+        };
     }
 
     private void BuildLayout()
     {
-        var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty };
-        frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
-        frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
-        Controls.Add(frame);
+        var shell = Grid(1, 2);
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        Controls.Add(shell);
 
-        var left = new Panel { Dock = DockStyle.Fill, BackColor = Side, Padding = new Padding(25, 28, 22, 20) };
-        frame.Controls.Add(left, 0, 0);
-        var l = Flow(left);
-        l.Controls.Add(Label("ETS2", 28, 45, Fore, true));
-        l.Controls.Add(Label("DISCORD PRESENCE", 10, 46, Accent, true));
-        l.Controls.Add(Label("Tu viaje en Discord", 19, 54, Fore, true));
-        l.Controls.Add(Label("Lo que haces en la carretera se convierte en tu actividad de Discord.", 10, 75, Muted));
-        l.Controls.Add(Label("VISTA PREVIA", 9, 52, Muted, true));
-        var preview = new Panel { BackColor = Card, Size = new Size(246, 190), Padding = new Padding(15) };
-        var p = Flow(preview);
-        p.Controls.Add(Label("●  ETS2 Discord Presence", 10, 35, Accent, true));
-        detailsLabel.Text = "Esperando una partida...";
-        detailsLabel.Font = new Font("Segoe UI", 12, FontStyle.Bold);
-        detailsLabel.ForeColor = Fore;
-        stateLabel.Text = "Abre ETS2 para ver tu actividad.";
-        stateLabel.ForeColor = Muted;
-        p.Controls.Add(detailsLabel);
-        p.Controls.Add(stateLabel);
-        l.Controls.Add(preview);
-        l.Controls.Add(Label("ESTADO", 9, 54, Muted, true));
-        statusLabel.ForeColor = Muted;
-        l.Controls.Add(statusLabel);
-
-        frame.Controls.Add(new HeroPanel(Path.Combine(AppContext.BaseDirectory, "hero-truck.png")) { Dock = DockStyle.Fill }, 1, 0);
-
-        var right = new Panel { Dock = DockStyle.Fill, BackColor = Side, Padding = new Padding(24, 29, 20, 20) };
-        frame.Controls.Add(right, 2, 0);
-        var r = Flow(right);
-        r.Controls.Add(Label("Ponerlo en marcha", 19, 57, Fore, true));
-        r.Controls.Add(Label("Instala el componente una vez. Después se conecta solo al abrirlo.", 10, 80, Muted));
-        r.Controls.Add(Label("1  EURO TRUCK SIMULATOR 2", 9, 41, Muted, true));
-        var gameRow = new TableLayoutPanel { Size = new Size(245, 42), ColumnCount = 2, RowCount = 1 };
-        gameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        gameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 69));
-        StyleInput(gamePathBox);
-        gamePathBox.Dock = DockStyle.Fill;
-        StyleSecondary(browseButton);
-        browseButton.Dock = DockStyle.Fill;
-        gameRow.Controls.Add(gamePathBox, 0, 0);
-        gameRow.Controls.Add(browseButton, 1, 0);
-        r.Controls.Add(gameRow);
-        StyleSecondary(installButton);
-        installButton.Width = 245;
-        installButton.Margin = new Padding(0, 12, 0, 0);
-        r.Controls.Add(installButton);
-        r.Controls.Add(Label("2  DISCORD", 9, 55, Muted, true));
-        r.Controls.Add(Label("Mantén abierta la aplicación de Discord en tu PC. La conexión es automática.", 10, 74, Fore));
-        r.Controls.Add(Label("3  EMPEZAR", 9, 45, Muted, true));
-        StylePrimary(startButton);
-        r.Controls.Add(startButton);
-        r.Controls.Add(Label("Puedes minimizar la ventana mientras conduces.", 10, 75, Muted));
-    }
-
-    private static FlowLayoutPanel Flow(Control parent)
-    {
-        var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Margin = Padding.Empty };
-        parent.Controls.Add(flow);
-        void FitChildren()
+        var header = Grid(3, 1);
+        header.Padding = new Padding(25, 0, 25, 0);
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        using var headerIcon = new Icon(appIcon, 48, 48);
+        var logo = new PictureBox
         {
-            var width = Math.Max(120, flow.ClientSize.Width - 22);
-            foreach (Control child in flow.Controls)
-                if (child.Width != width) child.Width = width;
-        }
-        flow.SizeChanged += (_, _) => FitChildren();
-        flow.ControlAdded += (_, _) => FitChildren();
-        return flow;
-    }
+            Image = headerIcon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
+            Size = new Size(42, 42), Anchor = AnchorStyles.Left, Margin = Padding.Empty
+        };
+        logo.Disposed += (_, _) => logo.Image?.Dispose();
+        header.Controls.Add(logo, 0, 0);
+        header.Controls.Add(TextLabel("ETS2 Discord Presence", 17, bold: true), 1, 0);
+        var desktop = TextLabel("EURO TRUCK SIMULATOR 2", 9, bold: true);
+        desktop.ForeColor = Mint;
+        desktop.AutoSize = true;
+        header.Controls.Add(desktop, 2, 0);
+        shell.Controls.Add(header, 0, 0);
 
-    private static Label Label(string text, int size, int height, Color color, bool bold = false) => new()
-    {
-        Text = text, Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular),
-        ForeColor = color, Size = new Size(248, height), Margin = Padding.Empty
-    };
+        var body = Grid(2, 1);
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        body.Controls.Add(new RoadArtwork { Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 0);
+        shell.Controls.Add(body, 0, 1);
 
-    private static void StyleInput(TextBox box)
-    {
-        box.BackColor = Card;
-        box.ForeColor = Fore;
-        box.BorderStyle = BorderStyle.FixedSingle;
-        box.Font = new Font("Segoe UI", 10);
-        box.Height = 38;
-    }
+        var dashboard = Grid(1, 7);
+        dashboard.BackColor = Background;
+        dashboard.Padding = new Padding(24, 19, 24, 20);
+        foreach (var height in new[] { 37, 32, 32 })
+            dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        foreach (var height in new[] { 54, 46, 42 })
+            dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
 
-    private static void StyleSecondary(Button button)
-    {
-        button.BackColor = Color.FromArgb(39, 59, 61);
-        button.ForeColor = Fore;
-        button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderSize = 0;
-        button.Cursor = Cursors.Hand;
-        button.Font = new Font("Segoe UI", 9, FontStyle.Bold);
-        button.Margin = Padding.Empty;
-    }
-
-    private static void StylePrimary(Button button)
-    {
-        button.BackColor = Accent;
-        button.ForeColor = Color.White;
-        button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderSize = 0;
-        button.Cursor = Cursors.Hand;
-        button.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-        button.Width = 245;
-        button.Margin = Padding.Empty;
-    }
-
-    private void BrowseGame()
-    {
-        using var picker = new FolderBrowserDialog { Description = "Selecciona la carpeta Euro Truck Simulator 2" };
-        if (picker.ShowDialog(this) != DialogResult.OK) return;
-        gamePathBox.Text = picker.SelectedPath;
-        UpdateSetupStatus();
-    }
-
-    private async Task InstallAsync()
-    {
-        installButton.Enabled = false;
-        statusLabel.Text = "Descargando e instalando...";
-        try
-        {
-            statusLabel.Text = await PluginInstaller.InstallAsync(gamePathBox.Text.Trim());
-            SaveSettings();
-            if (IsValidAppId(DiscordIdentity.ApplicationId)) Start();
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException or TaskCanceledException)
-        {
-            statusLabel.Text = ex.Message;
-            MessageBox.Show(this, ex.Message, "No se pudo instalar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-        finally { installButton.Enabled = true; }
+        dashboard.Controls.Add(TextLabel("Estado de conexión", 14, bold: true), 0, 0);
+        dashboard.Controls.Add(gameStatus, 0, 1);
+        dashboard.Controls.Add(discordStatus, 0, 2);
+        var preview = Grid(1, 3);
+        preview.BackColor = Surface;
+        preview.Margin = new Padding(0, 12, 0, 6);
+        preview.Padding = new Padding(16, 10, 16, 10);
+        preview.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        preview.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        preview.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var caption = TextLabel("VISTA PREVIA EN DISCORD", 9, bold: true);
+        caption.ForeColor = Mint;
+        preview.Controls.Add(caption, 0, 0);
+        preview.Controls.Add(details, 0, 1);
+        state.TextAlign = ContentAlignment.TopLeft;
+        preview.Controls.Add(state, 0, 2);
+        dashboard.Controls.Add(preview, 0, 3);
+        dashboard.Controls.Add(guidance, 0, 4);
+        dashboard.Controls.Add(toggle, 0, 5);
+        dashboard.Controls.Add(locate, 0, 6);
+        locate.Visible = false;
+        body.Controls.Add(dashboard, 1, 0);
     }
 
     private void Start()
     {
-        if (!SteamLocator.IsValidGamePath(gamePathBox.Text.Trim()))
+        discord.OnReady += (_, _) => discordReady = true;
+        discord.OnClose += (_, _) => discordReady = false;
+        discord.OnConnectionFailed += (_, _) => discordReady = false;
+        discord.Initialize();
+
+        try
         {
-            MessageBox.Show(this, "Primero selecciona la carpeta de ETS2.", Text); return;
+            var saved = AppSettings.Load().GamePath;
+            PrepareGame(SteamLocator.IsValidGamePath(saved) ? saved : SteamLocator.FindGame());
         }
-        if (!PluginInstaller.IsInstalled(gamePathBox.Text.Trim()))
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, "Primero pulsa 'Instalar componente'.", Text); return;
+            SetSetupError("No se pudo leer la biblioteca de Steam. Puedes buscar ETS2.", allowBrowse: true);
         }
-        if (!IsValidAppId(DiscordIdentity.ApplicationId))
+
+        RefreshPresence();
+        timer.Start();
+    }
+
+    private void PrepareGame(string? path)
+    {
+        setupError = null;
+        canLocateGame = false;
+        if (path is null)
         {
-            MessageBox.Show(this, "La conexión de Discord aún no está preparada en esta versión de prueba.", Text); return;
+            SetSetupError("Selecciona la carpeta de ETS2 si está en otra biblioteca.", allowBrowse: true);
+            return;
         }
         try
         {
-            SaveSettings();
-            discord = new DiscordRpcClient(DiscordIdentity.ApplicationId);
-            discord.Initialize();
-            running = true;
-            startButton.Text = "DETENER PRESENCIA";
-            timer.Start();
-            UpdatePresence();
+            var installed = PluginInstaller.Prepare(path);
+            restartNeeded = installed && IsGameRunning();
+            gamePrepared = true;
         }
-        catch (Exception ex)
+        catch (UnauthorizedAccessException)
         {
-            discord?.Dispose();
-            discord = null;
-            statusLabel.Text = $"Discord no está listo: {ex.Message}";
+            SetSetupError("Windows protegió la carpeta de ETS2. Abre esta app como administrador para prepararla.", allowBrowse: false);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or InvalidDataException)
+        {
+            SetSetupError(ex.Message, allowBrowse: true);
         }
     }
 
-    private void Stop()
+    private void SetSetupError(string message, bool allowBrowse)
     {
-        timer.Stop();
-        running = false;
-        lastPresence = null;
-        discord?.ClearPresence();
-        discord?.Dispose();
-        discord = null;
-        startButton.Text = "INICIAR PRESENCIA  →";
-        if (!IsDisposed) statusLabel.Text = "Detenido";
+        gamePrepared = false;
+        setupError = message;
+        canLocateGame = allowBrowse;
     }
 
-    private void UpdatePresence()
+    private void LocateGame()
     {
-        if (discord is null) return;
-        if (!TelemetryReader.TryRead(out var telemetry, out var error) || telemetry is null)
+        using var picker = new FolderBrowserDialog { Description = "Selecciona la carpeta de Euro Truck Simulator 2" };
+        if (picker.ShowDialog(this) != DialogResult.OK) return;
+        PrepareGame(picker.SelectedPath);
+        if (gamePrepared)
         {
-            if (lastPresence is not null) { discord.ClearPresence(); lastPresence = null; }
-            statusLabel.Text = error ?? "Esperando ETS2...";
-            detailsLabel.Text = "Esperando una partida...";
-            stateLabel.Text = "Abre ETS2 para ver tu actividad.";
+            try { new AppSettings(picker.SelectedPath).Save(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        RefreshPresence();
+    }
+
+    private void ToggleSharing()
+    {
+        sharing = !sharing;
+        toggle.Text = sharing ? "Pausar actividad" : "Reanudar actividad";
+        RefreshPresence();
+    }
+
+    private void RefreshPresence()
+    {
+        var ready = discordReady;
+        SetStatus(discordStatus, ready ? "Discord  ·  Conectado" : "Discord  ·  Esperando la app de escritorio", ready);
+        var hasTravel = TelemetryReader.TryRead(out var telemetry, out var readError) && telemetry is not null;
+        locate.Visible = canLocateGame && !hasTravel;
+
+        if (hasTravel && telemetry is not null)
+        {
+            SetStatus(gameStatus, "ETS2  ·  Viaje detectado", true);
+            var presence = PresenceFormatter.Format(telemetry, cities.FindNearby(telemetry.X, telemetry.Z));
+            details.Text = sharing ? presence.Details : "Actividad en pausa";
+            state.Text = sharing ? presence.State : "Reanuda para compartir los datos del viaje.";
+            guidance.Text = !sharing ? "La actividad está oculta." : ready ? "Puedes minimizar la ventana mientras juegas." : "Abre Discord de escritorio para compartir tu viaje.";
+            Publish(sharing && ready ? presence : null);
             return;
         }
-        var city = cities.FindNearby(telemetry.X, telemetry.Z);
-        var presence = PresenceFormatter.Format(telemetry, city);
-        var key = presence.Details + "|" + presence.State;
-        if (key != lastPresence)
-        {
-            discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
-            lastPresence = key;
-        }
-        statusLabel.Text = "Leyendo ETS2 y actualizando Discord";
-        detailsLabel.Text = presence.Details;
-        stateLabel.Text = presence.State;
+
+        var gameRunning = IsGameRunning();
+        if (!gameRunning) restartNeeded = false;
+        SetStatus(gameStatus, gamePrepared ? "ETS2  ·  Esperando el viaje" : "ETS2  ·  Preparación pendiente", false);
+        details.Text = sharing ? "Sin viaje activo" : "Actividad en pausa";
+        state.Text = "Aquí aparecerán la entrega y el destino.";
+        guidance.Text = setupError ?? (restartNeeded
+            ? "Reinicia ETS2 una vez para que empiece a enviar datos."
+            : gameRunning ? readError ?? "Entra a una partida para compartir tu viaje." : "Abre ETS2 para empezar.");
+        Publish(null);
     }
 
-    private void UpdateSetupStatus() => statusLabel.Text = SteamLocator.IsValidGamePath(gamePathBox.Text)
-        ? "ETS2 encontrado. Instala el componente y abre Discord."
-        : "Selecciona la carpeta donde está instalado ETS2.";
-
-    private void SaveSettings() => new AppSettings(gamePathBox.Text.Trim()).Save();
-    private static bool IsValidAppId(string value) => value.Length is >= 17 and <= 20 && value.All(char.IsAsciiDigit);
-    private void ShowFromTray() { Show(); WindowState = FormWindowState.Normal; Activate(); }
-
-    private sealed class HeroPanel : Panel
+    private void Publish(PresenceText? presence)
     {
-        private readonly Image? image;
-        public HeroPanel(string path)
+        if (presence == lastPresence) return;
+        if (presence is null)
+            discord.ClearPresence();
+        else
+            discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
+        lastPresence = presence;
+    }
+
+    private static bool IsGameRunning()
+    {
+        var processes = Process.GetProcessesByName("eurotrucks2");
+        foreach (var process in processes) process.Dispose();
+        return processes.Length > 0;
+    }
+
+    private void RestoreWindow()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    private void ShowLicenses()
+    {
+        RestoreWindow();
+        using var window = new Form
         {
-            BackColor = Back;
+            Text = "Licencias", Size = new Size(680, 500),
+            StartPosition = FormStartPosition.CenterParent
+        };
+        using var telemetry = new StreamReader(AppResources.Open("RENCLOUD-LICENSE.txt"));
+        using var cityData = new StreamReader(AppResources.Open("CITY-DATA-LICENSE.txt"));
+        window.Controls.Add(new TextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+            Text = "RenCloud SCS SDK Plugin\r\n\r\n" + telemetry.ReadToEnd()
+                + "\r\n\r\nETS2 City Coordinate Retriever\r\n\r\n" + cityData.ReadToEnd()
+        });
+        window.ShowDialog(this);
+    }
+
+    private static void SetStatus(Label label, string text, bool active)
+    {
+        label.Text = text;
+        label.ForeColor = active ? Mint : Amber;
+    }
+
+    private static TableLayoutPanel Grid(int columns, int rows) => new()
+    {
+        Dock = DockStyle.Fill, ColumnCount = columns, RowCount = rows, Margin = Padding.Empty
+    };
+
+    private static Label TextLabel(string text, int size, bool bold = false) => new()
+    {
+        Text = text, Dock = DockStyle.Fill, Margin = Padding.Empty, AutoEllipsis = true,
+        TextAlign = ContentAlignment.MiddleLeft, ForeColor = bold ? Foreground : Muted,
+        Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular)
+    };
+
+    private static Button MakeButton(string text)
+    {
+        var button = new Button
+        {
+            Text = text, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4),
+            FlatStyle = FlatStyle.Flat, BackColor = Surface, ForeColor = Foreground,
+            Font = new Font("Segoe UI", 10, FontStyle.Bold), Cursor = Cursors.Hand
+        };
+        button.FlatAppearance.BorderColor = Color.FromArgb(64, 97, 103);
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(34, 61, 68);
+        return button;
+    }
+
+    private sealed class RoadArtwork : Panel
+    {
+        private readonly Bitmap image;
+
+        public RoadArtwork()
+        {
+            using var stream = AppResources.Open("hero-truck.png");
+            using var source = Image.FromStream(stream);
+            image = new Bitmap(source);
             DoubleBuffered = true;
-            if (File.Exists(path)) image = Image.FromFile(path);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            if (image is not null)
-            {
-                var scale = Math.Max((float)Width / image.Width, (float)Height / image.Height);
-                var width = image.Width * scale;
-                var height = image.Height * scale;
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                e.Graphics.DrawImage(image, (Width - width) / 2, (Height - height) / 2, width, height);
-            }
-            using var shade = new LinearGradientBrush(new Rectangle(0, Height - 195, Width, 195), Color.FromArgb(0, Back), Color.FromArgb(235, Back), LinearGradientMode.Vertical);
-            e.Graphics.FillRectangle(shade, 0, Height - 195, Width, 195);
-            using var titleFont = new Font("Segoe UI", 20, FontStyle.Bold);
-            using var subtitleFont = new Font("Segoe UI", 10);
-            using var white = new SolidBrush(Fore);
-            using var soft = new SolidBrush(Color.FromArgb(204, 216, 217));
-            e.Graphics.DrawString("Cada ruta cuenta.", titleFont, white, 28, Height - 132);
-            e.Graphics.DrawString("Comparte tu viaje mientras conduces.", subtitleFont, soft, 30, Height - 86);
+            if (Width == 0 || Height == 0) return;
+            var scale = Math.Max((float)Width / image.Width, (float)Height / image.Height);
+            var width = image.Width * scale;
+            var height = image.Height * scale;
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            e.Graphics.DrawImage(image, (Width - width) / 2, (Height - height) / 2, width, height);
+            var shadeArea = new Rectangle(0, Height * 2 / 3, Width, Height - Height * 2 / 3);
+            using var shade = new LinearGradientBrush(shadeArea, Color.Transparent, Color.FromArgb(224, Background), LinearGradientMode.Vertical);
+            e.Graphics.FillRectangle(shade, shadeArea);
+            using var titleFont = new Font("Segoe UI", 22, FontStyle.Bold);
+            TextRenderer.DrawText(e.Graphics, "Tu viaje en Discord", titleFont,
+                new Rectangle(24, Height - 75, Math.Max(1, Width - 48), 52), Foreground,
+                TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) image?.Dispose();
+            if (disposing) image.Dispose();
             base.Dispose(disposing);
         }
     }

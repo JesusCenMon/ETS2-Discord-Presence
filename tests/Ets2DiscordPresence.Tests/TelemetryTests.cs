@@ -7,6 +7,28 @@ namespace Ets2DiscordPresence.Tests;
 public sealed class TelemetryTests
 {
     [Fact]
+    public void PreparesGameFromBundledReaderAndLeavesExistingFilesAlone()
+    {
+        var game = Directory.CreateTempSubdirectory("ets2-presence-test-");
+        try
+        {
+            var binary = Directory.CreateDirectory(Path.Combine(game.FullName, "bin", "win_x64"));
+            File.WriteAllBytes(Path.Combine(binary.FullName, "eurotrucks2.exe"), []);
+            Assert.True(PluginInstaller.Prepare(game.FullName));
+            Assert.False(PluginInstaller.Prepare(game.FullName));
+            var plugin = Assert.Single(Directory.GetFiles(Path.Combine(binary.FullName, "plugins")));
+            Assert.True(new FileInfo(plugin).Length > 0);
+            File.WriteAllText(plugin, "existing file");
+            Assert.Throws<IOException>(() => PluginInstaller.Prepare(game.FullName));
+            Assert.Equal("existing file", File.ReadAllText(plugin));
+        }
+        finally
+        {
+            game.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void ReadsDeliveryFromPinnedPluginLayout()
     {
         var bytes = new byte[4400];

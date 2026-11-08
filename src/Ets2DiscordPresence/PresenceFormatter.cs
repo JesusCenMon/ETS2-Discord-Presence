@@ -10,11 +10,10 @@ internal sealed class CityLookup
     private readonly List<City> cities;
     private sealed record City(string Name, double X, double Z);
 
-    public CityLookup(string path)
+    public CityLookup(Stream source)
     {
         cities = new();
-        if (!File.Exists(path)) return;
-        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        using var document = JsonDocument.Parse(source);
         foreach (var item in document.RootElement.GetProperty("citiesList").EnumerateArray())
         {
             if (double.TryParse(item.GetProperty("x").GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
