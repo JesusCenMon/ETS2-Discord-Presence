@@ -78,24 +78,15 @@ internal sealed class MainForm : Form
         shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(shell);
 
-        var header = Grid(3, 1);
+        var header = Grid(2, 1);
         header.Padding = new Padding(25, 0, 25, 0);
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        using var headerIcon = new Icon(appIcon, 48, 48);
-        var logo = new PictureBox
-        {
-            Image = headerIcon.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
-            Size = new Size(42, 42), Anchor = AnchorStyles.Left, Margin = Padding.Empty
-        };
-        logo.Disposed += (_, _) => logo.Image?.Dispose();
-        header.Controls.Add(logo, 0, 0);
-        header.Controls.Add(TextLabel("ETS2 Discord Presence", 17, bold: true), 1, 0);
+        header.Controls.Add(TextLabel("ETS2 Discord Presence", 17, bold: true), 0, 0);
         var desktop = TextLabel("EURO TRUCK SIMULATOR 2", 9, bold: true);
         desktop.ForeColor = Mint;
         desktop.AutoSize = true;
-        header.Controls.Add(desktop, 2, 0);
+        header.Controls.Add(desktop, 1, 0);
         shell.Controls.Add(header, 0, 0);
 
         var body = Grid(2, 1);
