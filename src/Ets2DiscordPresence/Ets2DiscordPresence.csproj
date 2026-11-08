@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ETS2DiscordPresence</AssemblyName>
+    <Version>0.3.0</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>../../assets/ets2-presence.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

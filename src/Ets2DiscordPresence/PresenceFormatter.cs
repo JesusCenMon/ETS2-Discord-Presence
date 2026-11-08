@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace Ets2DiscordPresence;
@@ -42,21 +43,41 @@ internal sealed class CityLookup
 
 internal static class PresenceFormatter
 {
-    public static PresenceText Format(TelemetrySnapshot data, string? city)
+    public static PresenceText Format(TelemetrySnapshot data, string? city, AppSettings? settings = null)
     {
-        if (data.Paused) return new PresenceText("En pausa", "Euro Truck Simulator 2");
-        var location = city is null ? null : $"Cerca de {city}";
+        settings ??= new AppSettings();
+        if (data.Paused) return new PresenceText("Juego en pausa", "Euro Truck Simulator 2");
+        var location = city is null || !settings.ShowCity ? null : $"Cerca de {city}";
+        var distance = settings.ShowDistance && data.RemainingKm is { } km
+            ? $"{Math.Ceiling(km)} km restantes" : null;
         if (!data.OnJob)
-            return new PresenceText("Explorando libremente", Limit(location ?? "Conduciendo por Europa"));
+            return new PresenceText("Explorando libremente", Limit(Join(location, distance) ?? "Conduciendo por Europa"));
 
-        var cargo = string.IsNullOrWhiteSpace(data.Cargo) ? "Entrega en curso" : $"Entregando {data.Cargo}";
-        var route = !string.IsNullOrWhiteSpace(data.SourceCity) && !string.IsNullOrWhiteSpace(data.DestinationCity)
-            ? $"{data.SourceCity} → {data.DestinationCity}" : "Entrega en curso";
-        var distance = float.IsFinite(data.RouteDistanceMeters) && data.RouteDistanceMeters > 0
-            ? $"{Math.Ceiling(data.RouteDistanceMeters / 1000)} km restantes" : null;
-        var state = string.Join(" · ", new[] { route, location, distance }.Where(x => x is not null));
-        return new PresenceText(Limit(cargo), Limit(state));
+        var cargo = settings.ShowCargo && !string.IsNullOrWhiteSpace(data.Cargo) ? $"Entregando {data.Cargo}" : null;
+        var route = settings.ShowRoute && !string.IsNullOrWhiteSpace(data.SourceCity) && !string.IsNullOrWhiteSpace(data.DestinationCity)
+            ? $"{data.SourceCity} → {data.DestinationCity}" : null;
+        if (settings.RouteFirst && route is not null)
+            return new PresenceText(Limit(route), Limit(Join(cargo, location, distance) ?? "Entrega en curso"));
+        return new PresenceText(Limit(cargo ?? "Entrega en curso"), Limit(Join(route, location, distance) ?? "Euro Truck Simulator 2"));
     }
 
-    private static string Limit(string text) => text.Length <= 128 ? text : text[..125] + "...";
+    private static string? Join(params string?[] fields)
+    {
+        var result = string.Join(" · ", fields.OfType<string>());
+        return result.Length == 0 ? null : result;
+    }
+
+    private static string Limit(string text)
+    {
+        if (Encoding.UTF8.GetByteCount(text) <= 128) return text;
+        var result = new StringBuilder();
+        var bytes = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > 125) break;
+            result.Append(rune.ToString());
+            bytes += rune.Utf8SequenceLength;
+        }
+        return result.Append('…').ToString();
+    }
 }

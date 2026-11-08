@@ -1,45 +1,52 @@
+using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
 using DiscordRPC;
-using Button = System.Windows.Forms.Button;
 
 namespace Ets2DiscordPresence;
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
-    private static readonly Color Background = Color.FromArgb(12, 21, 27);
-    private static readonly Color Surface = Color.FromArgb(21, 35, 43);
-    private static readonly Color Foreground = Color.FromArgb(244, 247, 244);
-    private static readonly Color Muted = Color.FromArgb(168, 190, 195);
-    private static readonly Color Mint = Color.FromArgb(128, 229, 201);
-    private static readonly Color Amber = Color.FromArgb(245, 192, 117);
+    private static readonly TelemetrySnapshot Sample = new(false, true, "Maquinaria industrial para obras de infraestructura",
+        "Lyon", "Turín", 0, 0, 215_000, 12, 1, 9 * 60 + 30, 10_800, 390);
 
-    private readonly Label gameStatus = TextLabel("Buscando ETS2…", 10);
-    private readonly Label discordStatus = TextLabel("Buscando Discord…", 10);
-    private readonly Label details = TextLabel("Sin viaje activo", 17, bold: true);
-    private readonly Label state = TextLabel("Aquí aparecerá la actividad de tu viaje.", 11);
-    private readonly Label guidance = TextLabel("Preparando la conexión…", 10);
-    private readonly Button toggle = MakeButton("Pausar actividad");
-    private readonly Button locate = MakeButton("Buscar ETS2");
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
     private readonly DiscordRpcClient discord = new(DiscordIdentity.ApplicationId);
+    private readonly CancellationTokenSource lifetime = new();
     private readonly CityLookup cities;
     private readonly Icon appIcon;
     private readonly NotifyIcon tray;
     private readonly ContextMenuStrip trayMenu = new();
+    private readonly ContextMenuStrip settingsMenu = new();
+    private readonly bool startMinimized;
+    private readonly ToolStripMenuItem trayPause = new();
+    private AppSettings preferences = AppSettings.Load();
     private PresenceText? lastPresence;
     private volatile bool discordReady;
-    private bool sharing = true;
+    private volatile bool discordWasReady;
+    private int connectionGeneration;
+    private int publishedGeneration;
+    private bool demo;
     private bool restartNeeded;
     private bool gamePrepared;
     private bool canLocateGame;
     private string? setupError;
+    private string? settingsError;
+    private string? gamePath;
+    private string? updateUrl;
+    private long nextGameCheck;
+    private ulong? lastFrame;
+    private long lastFrameAt;
+    private string? city;
+    private string? cityCandidate;
+    private int citySamples;
+    private uint? lastRevision;
 
-    public MainForm()
+    public MainForm(bool startMinimized = false)
     {
+        this.startMinimized = startMinimized;
         Text = "ETS2 Discord Presence";
-        ClientSize = new Size(1030, 600);
-        MinimumSize = new Size(760, 530);
+        ClientSize = new Size(1070, 710);
+        MinimumSize = new Size(400, 390);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background;
@@ -53,115 +60,106 @@ internal sealed class MainForm : Form
 
         tray = new NotifyIcon { Icon = appIcon, Text = Text, Visible = true, ContextMenuStrip = trayMenu };
         trayMenu.Items.Add("Abrir panel", null, (_, _) => RestoreWindow());
+        trayPause.Click += (_, _) => ToggleSharing();
+        trayMenu.Items.Add(trayPause);
         trayMenu.Items.Add("Licencias", null, (_, _) => ShowLicenses());
         trayMenu.Items.Add("Salir", null, (_, _) => Close());
         tray.DoubleClick += (_, _) => RestoreWindow();
-        Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) Hide(); };
+        UpdateSharingControls();
+
+        if (startMinimized)
+        {
+            WindowState = FormWindowState.Minimized;
+            ShowInTaskbar = false;
+        }
+
+        Resize += (_, _) =>
+        {
+            if (WindowState == FormWindowState.Minimized && Visible) Hide();
+            ArrangeLayout();
+        };
+        DpiChanged += (_, _) => ArrangeLayout();
         timer.Tick += (_, _) => RefreshPresence();
         toggle.Click += (_, _) => ToggleSharing();
         locate.Click += (_, _) => LocateGame();
+        launch.Click += (_, _) => OpenExternal("steam://rungameid/227300");
+        settingsButton.Click += (_, _) => settingsMenu.Show(settingsButton, new Point(0, settingsButton.Height));
+        updateButton.Click += (_, _) => { if (updateUrl is not null) OpenExternal(updateUrl); };
+        BuildSettings();
         Shown += (_, _) => Start();
         FormClosed += (_, _) =>
         {
+            lifetime.Cancel();
             timer.Dispose();
             discord.Dispose();
             tray.Dispose();
             trayMenu.Dispose();
+            settingsMenu.Dispose();
             appIcon.Dispose();
+            lifetime.Dispose();
         };
     }
 
-    private void BuildLayout()
+    private async void Start()
     {
-        var shell = Grid(1, 2);
-        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
-        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(shell);
-
-        var header = Grid(2, 1);
-        header.Padding = new Padding(25, 0, 25, 0);
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.Controls.Add(TextLabel("ETS2 Discord Presence", 17, bold: true), 0, 0);
-        var desktop = TextLabel("EURO TRUCK SIMULATOR 2", 9, bold: true);
-        desktop.ForeColor = Mint;
-        desktop.AutoSize = true;
-        header.Controls.Add(desktop, 1, 0);
-        shell.Controls.Add(header, 0, 0);
-
-        var body = Grid(2, 1);
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        body.Controls.Add(new RoadArtwork { Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 0);
-        shell.Controls.Add(body, 0, 1);
-
-        var dashboard = Grid(1, 7);
-        dashboard.BackColor = Background;
-        dashboard.Padding = new Padding(24, 19, 24, 20);
-        foreach (var height in new[] { 37, 32, 32 })
-            dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-        dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 54, 46, 42 })
-            dashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-
-        dashboard.Controls.Add(TextLabel("Estado de conexión", 14, bold: true), 0, 0);
-        dashboard.Controls.Add(gameStatus, 0, 1);
-        dashboard.Controls.Add(discordStatus, 0, 2);
-        var preview = Grid(1, 3);
-        preview.BackColor = Surface;
-        preview.Margin = new Padding(0, 12, 0, 6);
-        preview.Padding = new Padding(16, 10, 16, 10);
-        preview.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-        preview.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
-        preview.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var caption = TextLabel("VISTA PREVIA EN DISCORD", 9, bold: true);
-        caption.ForeColor = Mint;
-        preview.Controls.Add(caption, 0, 0);
-        preview.Controls.Add(details, 0, 1);
-        state.TextAlign = ContentAlignment.TopLeft;
-        preview.Controls.Add(state, 0, 2);
-        dashboard.Controls.Add(preview, 0, 3);
-        dashboard.Controls.Add(guidance, 0, 4);
-        dashboard.Controls.Add(toggle, 0, 5);
-        dashboard.Controls.Add(locate, 0, 6);
-        locate.Visible = false;
-        body.Controls.Add(dashboard, 1, 0);
-    }
-
-    private void Start()
-    {
-        discord.OnReady += (_, _) => discordReady = true;
+        if (startMinimized) Hide();
+        discord.OnReady += (_, _) =>
+        {
+            discordWasReady = true;
+            Interlocked.Increment(ref connectionGeneration);
+            discordReady = true;
+        };
         discord.OnClose += (_, _) => discordReady = false;
         discord.OnConnectionFailed += (_, _) => discordReady = false;
         discord.Initialize();
+        DiscoverGame();
+        RefreshPresence();
+        timer.Start();
 
         try
         {
-            var saved = AppSettings.Load().GamePath;
-            PrepareGame(SteamLocator.IsValidGamePath(saved) ? saved : SteamLocator.FindGame());
+            var release = await DesktopServices.CheckForUpdateAsync(lifetime.Token);
+            if (release is { } found && !IsDisposed)
+            {
+                updateUrl = found.Url;
+                updateButton.Text = $"↓  Descargar v{found.Version}";
+                updateButton.Visible = true;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        {
+            // An unavailable update check does not affect the trip or Discord.
+        }
+    }
+
+    private void DiscoverGame()
+    {
+        nextGameCheck = Environment.TickCount64 + 15_000;
+        try
+        {
+            var detected = SteamLocator.IsValidGamePath(preferences.GamePath)
+                ? preferences.GamePath : SteamLocator.FindGame();
+            if (detected != gamePath || (!gamePrepared && setupError is null)) PrepareGame(detected);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            SetSetupError("No se pudo leer la biblioteca de Steam. Puedes buscar ETS2.", allowBrowse: true);
+            SetSetupError("No se pudo leer la biblioteca de Steam. Usa Buscar ETS2.", allowBrowse: true);
         }
-
-        RefreshPresence();
-        timer.Start();
     }
 
     private void PrepareGame(string? path)
     {
+        gamePath = path;
         setupError = null;
         canLocateGame = false;
         if (path is null)
         {
-            SetSetupError("Selecciona la carpeta de ETS2 si está en otra biblioteca.", allowBrowse: true);
+            SetSetupError("ETS2 no aparece en Steam. Selecciona su carpeta.", allowBrowse: true);
             return;
         }
         try
         {
-            var installed = PluginInstaller.Prepare(path);
-            restartNeeded = installed && IsGameRunning();
+            restartNeeded = PluginInstaller.Prepare(path) && IsGameRunning();
             gamePrepared = true;
         }
         catch (UnauthorizedAccessException)
@@ -170,7 +168,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or InvalidDataException)
         {
-            SetSetupError(ex.Message, allowBrowse: true);
+            SetSetupError(ex.Message, allowBrowse: !SteamLocator.IsValidGamePath(path));
         }
     }
 
@@ -186,58 +184,162 @@ internal sealed class MainForm : Form
         using var picker = new FolderBrowserDialog { Description = "Selecciona la carpeta de Euro Truck Simulator 2" };
         if (picker.ShowDialog(this) != DialogResult.OK) return;
         PrepareGame(picker.SelectedPath);
-        if (gamePrepared)
+        if (gamePrepared) SavePreferences(preferences with { GamePath = picker.SelectedPath });
+        RefreshPresence();
+    }
+
+    private void BuildSettings()
+    {
+        AddSetting("Compartir carga", preferences.ShowCargo, value => SavePreferences(preferences with { ShowCargo = value }));
+        AddSetting("Compartir ruta", preferences.ShowRoute, value => SavePreferences(preferences with { ShowRoute = value }));
+        AddSetting("Compartir ciudad cercana", preferences.ShowCity, value => SavePreferences(preferences with { ShowCity = value }));
+        AddSetting("Compartir distancia", preferences.ShowDistance, value => SavePreferences(preferences with { ShowDistance = value }));
+        AddSetting("Dar prioridad a la ruta en Discord", preferences.RouteFirst, value => SavePreferences(preferences with { RouteFirst = value }));
+        settingsMenu.Items.Add(new ToolStripSeparator());
+        AddSetting("Vista compacta", preferences.Compact, value =>
         {
-            try { new AppSettings(picker.SelectedPath).Save(); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            SavePreferences(preferences with { Compact = value });
+            ApplyCompactSize();
+        });
+        AddSetting("Demostración local", false, value =>
+        {
+            demo = value;
+            RefreshPresence();
+        });
+        AddSetting("Iniciar minimizada con Windows", DesktopServices.StartsWithWindows(), value =>
+        {
+            try { DesktopServices.SetStartup(value); }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+            {
+                MessageBox.Show(this, "Windows no permitió cambiar el inicio automático.", Text);
+            }
+        });
+        settingsMenu.Items.Add("Buscar ETS2…", null, (_, _) => LocateGame());
+        settingsMenu.Items.Add("Reintentar preparación", null, (_, _) =>
+        {
+            PrepareGame(SteamLocator.IsValidGamePath(gamePath) ? gamePath : null);
+            if (gamePath is null) DiscoverGame();
+            RefreshPresence();
+        });
+        settingsMenu.Items.Add("Copiar diagnóstico", null, (_, _) => CopyDiagnostics());
+        ApplyCompactSize();
+    }
+
+    private void AddSetting(string text, bool enabled, Action<bool> change)
+    {
+        var item = new ToolStripMenuItem(text) { Checked = enabled, CheckOnClick = true };
+        item.CheckedChanged += (_, _) => change(item.Checked);
+        settingsMenu.Items.Add(item);
+    }
+
+    private void SavePreferences(AppSettings updated)
+    {
+        preferences = updated;
+        try
+        {
+            preferences.Save();
+            settingsError = null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            settingsError = "Windows no permitió guardar tus preferencias.";
         }
         RefreshPresence();
     }
 
     private void ToggleSharing()
     {
-        sharing = !sharing;
-        toggle.Text = sharing ? "Pausar actividad" : "Reanudar actividad";
-        RefreshPresence();
+        SavePreferences(preferences with { Sharing = !preferences.Sharing });
+        UpdateSharingControls();
+    }
+
+    private void UpdateSharingControls()
+    {
+        var action = preferences.Sharing ? "Pausar publicación" : "Reanudar publicación";
+        toggle.Text = $"{(preferences.Sharing ? "Ⅱ" : "▶")}  {action}";
+        trayPause.Text = action;
     }
 
     private void RefreshPresence()
     {
         var ready = discordReady;
-        SetStatus(discordStatus, ready ? "Discord  ·  Conectado" : "Discord  ·  Esperando la app de escritorio", ready);
-        var hasTravel = TelemetryReader.TryRead(out var telemetry, out var readError) && telemetry is not null;
-        locate.Visible = canLocateGame && !hasTravel;
+        SetStatus(discordStatus, ready ? "Discord · Conectado" :
+            discordWasReady ? "Discord · Reconectando…" : "Discord · Esperando la app de escritorio", ready);
 
-        if (hasTravel && telemetry is not null)
+        var now = Environment.TickCount64;
+        var running = IsGameRunning();
+        if (!running) restartNeeded = false;
+        if (now >= nextGameCheck && (!gamePrepared || !SteamLocator.IsValidGamePath(gamePath))) DiscoverGame();
+
+        TelemetrySnapshot? telemetry = null;
+        string? readError = null;
+        if (running) TelemetryReader.TryRead(out telemetry, out readError);
+        var frozen = telemetry is not null && !IsFresh(telemetry, now);
+        if (frozen) telemetry = null;
+        if (telemetry is null) ResetLocation(running);
+        else lastRevision = telemetry.PluginRevision;
+
+        locate.Visible = canLocateGame && telemetry is null;
+        launch.Visible = !running;
+        var status = telemetry is not null ? "ETS2 · Viaje detectado" : frozen ? "ETS2 · Datos detenidos"
+            : setupError is not null ? "ETS2 · Revisar preparación"
+            : running ? "ETS2 · Esperando la partida" : "ETS2 · Cerrado";
+        SetStatus(gameStatus, status, telemetry is not null);
+
+        var nearby = telemetry is null ? null : TrackCity(cities.FindNearby(telemetry.X, telemetry.Z));
+        var trip = demo ? Sample : telemetry;
+        var displayedCity = demo ? "Chambéry" : nearby;
+        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, preferences);
+        RenderTrip(trip, displayedCity, presence);
+        guidance.Text = settingsError ?? (demo ? "Demostración local. El viaje de ejemplo no se publica."
+            : !preferences.Sharing ? "La publicación está pausada. Puedes reanudarla desde este panel o la bandeja."
+            : telemetry is not null ? (ready ? "Actividad preparada para Discord." : "Abre Discord de escritorio para compartir tu viaje.")
+            : setupError ?? (restartNeeded ? "Reinicia ETS2 para activar la lectura del viaje."
+                : frozen ? "El juego dejó de enviar datos. Se retiró la actividad anterior."
+                : running ? readError ?? "Entra a una partida." : "Abre ETS2 para empezar."));
+        Publish(!demo && preferences.Sharing && ready ? presence : null);
+    }
+
+    private bool IsFresh(TelemetrySnapshot snapshot, long now)
+    {
+        if (snapshot.RenderTime != lastFrame)
         {
-            SetStatus(gameStatus, "ETS2  ·  Viaje detectado", true);
-            var presence = PresenceFormatter.Format(telemetry, cities.FindNearby(telemetry.X, telemetry.Z));
-            details.Text = sharing ? presence.Details : "Actividad en pausa";
-            state.Text = sharing ? presence.State : "Reanuda para compartir los datos del viaje.";
-            guidance.Text = !sharing ? "La actividad está oculta." : ready ? "Puedes minimizar la ventana mientras juegas." : "Abre Discord de escritorio para compartir tu viaje.";
-            Publish(sharing && ready ? presence : null);
-            return;
+            lastFrame = snapshot.RenderTime;
+            lastFrameAt = now;
         }
+        return now - lastFrameAt <= 12_000;
+    }
 
-        var gameRunning = IsGameRunning();
-        if (!gameRunning) restartNeeded = false;
-        SetStatus(gameStatus, gamePrepared ? "ETS2  ·  Esperando el viaje" : "ETS2  ·  Preparación pendiente", false);
-        details.Text = sharing ? "Sin viaje activo" : "Actividad en pausa";
-        state.Text = "Aquí aparecerán la entrega y el destino.";
-        guidance.Text = setupError ?? (restartNeeded
-            ? "Reinicia ETS2 una vez para que empiece a enviar datos."
-            : gameRunning ? readError ?? "Entra a una partida para compartir tu viaje." : "Abre ETS2 para empezar.");
-        Publish(null);
+    private string? TrackCity(string? nearby)
+    {
+        if (nearby != cityCandidate)
+        {
+            cityCandidate = nearby;
+            citySamples = 1;
+        }
+        else if (citySamples < 3) citySamples++;
+        if (citySamples == 3) city = cityCandidate;
+        return city;
+    }
+
+    private void ResetLocation(bool running)
+    {
+        city = null;
+        cityCandidate = null;
+        citySamples = 0;
+        if (!running) lastFrame = null;
     }
 
     private void Publish(PresenceText? presence)
     {
-        if (presence == lastPresence) return;
+        var generation = Volatile.Read(ref connectionGeneration);
+        if (presence == lastPresence && (presence is null || generation == publishedGeneration)) return;
         if (presence is null)
             discord.ClearPresence();
         else
             discord.SetPresence(new RichPresence { Details = presence.Details, State = presence.State });
         lastPresence = presence;
+        publishedGeneration = generation;
     }
 
     private static bool IsGameRunning()
@@ -247,8 +349,34 @@ internal sealed class MainForm : Form
         return processes.Length > 0;
     }
 
-    private void RestoreWindow()
+    private void CopyDiagnostics()
     {
+        var gameVersion = SteamLocator.IsValidGamePath(gamePath)
+            ? FileVersionInfo.GetVersionInfo(Path.Combine(gamePath!, "bin", "win_x64", "eurotrucks2.exe")).FileVersion : null;
+        try
+        {
+            Clipboard.SetText(string.Join(Environment.NewLine,
+                $"ETS2 Discord Presence {DesktopServices.Version.ToString(3)}",
+                $"Versión de ETS2: {gameVersion ?? "No detectada"}",
+                $"Revisión del lector: {lastRevision?.ToString() ?? "No detectada"}",
+                gameStatus.Text, discordStatus.Text, setupError ?? ""));
+            MessageBox.Show(this, "Diagnóstico copiado al portapapeles.", Text);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            MessageBox.Show(this, "El portapapeles está ocupado. Intenta otra vez.", Text);
+        }
+    }
+
+    private void OpenExternal(string uri)
+    {
+        try { DesktopServices.Open(uri); }
+        catch (Win32Exception) { MessageBox.Show(this, "Windows no pudo abrir el enlace.", Text); }
+    }
+
+    internal void RestoreWindow()
+    {
+        ShowInTaskbar = true;
         Show();
         WindowState = FormWindowState.Normal;
         Activate();
@@ -271,73 +399,5 @@ internal sealed class MainForm : Form
                 + "\r\n\r\nETS2 City Coordinate Retriever\r\n\r\n" + cityData.ReadToEnd()
         });
         window.ShowDialog(this);
-    }
-
-    private static void SetStatus(Label label, string text, bool active)
-    {
-        label.Text = text;
-        label.ForeColor = active ? Mint : Amber;
-    }
-
-    private static TableLayoutPanel Grid(int columns, int rows) => new()
-    {
-        Dock = DockStyle.Fill, ColumnCount = columns, RowCount = rows, Margin = Padding.Empty
-    };
-
-    private static Label TextLabel(string text, int size, bool bold = false) => new()
-    {
-        Text = text, Dock = DockStyle.Fill, Margin = Padding.Empty, AutoEllipsis = true,
-        TextAlign = ContentAlignment.MiddleLeft, ForeColor = bold ? Foreground : Muted,
-        Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular)
-    };
-
-    private static Button MakeButton(string text)
-    {
-        var button = new Button
-        {
-            Text = text, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4),
-            FlatStyle = FlatStyle.Flat, BackColor = Surface, ForeColor = Foreground,
-            Font = new Font("Segoe UI", 10, FontStyle.Bold), Cursor = Cursors.Hand
-        };
-        button.FlatAppearance.BorderColor = Color.FromArgb(64, 97, 103);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(34, 61, 68);
-        return button;
-    }
-
-    private sealed class RoadArtwork : Panel
-    {
-        private readonly Bitmap image;
-
-        public RoadArtwork()
-        {
-            using var stream = AppResources.Open("hero-truck.png");
-            using var source = Image.FromStream(stream);
-            image = new Bitmap(source);
-            DoubleBuffered = true;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            if (Width == 0 || Height == 0) return;
-            var scale = Math.Max((float)Width / image.Width, (float)Height / image.Height);
-            var width = image.Width * scale;
-            var height = image.Height * scale;
-            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            e.Graphics.DrawImage(image, (Width - width) / 2, (Height - height) / 2, width, height);
-            var shadeArea = new Rectangle(0, Height * 2 / 3, Width, Height - Height * 2 / 3);
-            using var shade = new LinearGradientBrush(shadeArea, Color.Transparent, Color.FromArgb(224, Background), LinearGradientMode.Vertical);
-            e.Graphics.FillRectangle(shade, shadeArea);
-            using var titleFont = new Font("Segoe UI", 22, FontStyle.Bold);
-            TextRenderer.DrawText(e.Graphics, "Tu viaje en Discord", titleFont,
-                new Rectangle(24, Height - 75, Math.Max(1, Width - 48), 52), Foreground,
-                TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) image.Dispose();
-            base.Dispose(disposing);
-        }
     }
 }
