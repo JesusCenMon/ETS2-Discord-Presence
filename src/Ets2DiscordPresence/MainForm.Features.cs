@@ -7,7 +7,6 @@ internal sealed partial class MainForm
     private readonly Label deadlineAlert = TextLabel("", 10, true);
     private readonly Label onboarding = TextLabel("", 10);
     private readonly Label finishBanner = TextLabel("", 11, true);
-    private readonly Button historyButton = MakeButton("Historial");
     private readonly Button summaryButton = MakeButton("Ver resumen");
     private readonly TripMap tripMap = new();
     private readonly string[] panelKeys = ["trip", "discord", "map"];
@@ -38,6 +37,8 @@ internal sealed partial class MainForm
         trayMenu.Items[3].Text = L("Licencias", "Licenses");
         trayMenu.Items[4].Text = L("Salir", "Exit");
         UpdateSharingControls();
+        UpdateShellTooltips();
+        UpdateShellLabels();
     }
 
     private static void Restyle(Control control)
@@ -178,6 +179,7 @@ internal sealed partial class MainForm
             var current = Screen.FromControl(this);
             var target = Screen.AllScreens.FirstOrDefault(screen => screen.DeviceName != current.DeviceName) ?? current;
             fullScreen = true;
+            Navigate("trip");
             WindowState = FormWindowState.Normal;
             FormBorderStyle = FormBorderStyle.None;
             Bounds = target.Bounds;

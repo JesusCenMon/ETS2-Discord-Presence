@@ -2,7 +2,7 @@ namespace Ets2DiscordPresence;
 
 internal sealed partial class MainForm
 {
-    private void ShowSettings()
+    private void ShowSettings(string initialTab = "")
     {
         using var window = ToolWindow(L("Ajustes", "Settings"), new Size(740, 560));
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -178,7 +178,6 @@ internal sealed partial class MainForm
                 return;
             }
             var compactChanged = preferences.Compact != compact.Checked;
-            var themeChanged = preferences.Theme != ThemeValue();
             string ThemeValue() => theme.SelectedIndex switch { 1 => "day", 2 => "night", _ => "system" };
             demo = localDemo.Checked;
             SavePreferences(ReadDiscord() with
@@ -207,13 +206,17 @@ internal sealed partial class MainForm
             RegisterPrivacyShortcut();
             if ((preferences.PrivacyShortcut > 0 && !hotkeyRegistered) || (preferences.Features.PauseShortcut && !pauseHotkeyRegistered))
                 MessageBox.Show(window, L("Windows no pudo registrar el atajo. Prueba otra combinación.", "Windows could not register the shortcut. Try another combination."), Text);
-            if (themeChanged) MessageBox.Show(window, L("Vuelve a abrir la app para aplicar el tema.", "Reopen the app to apply the theme."), Text);
             ScaleText(this);
             if (compactChanged && !fullScreen) ApplyCompactSize();
             ConfigurePanels();
             RefreshPresence();
             window.DialogResult = DialogResult.OK;
         };
+        var initialPage = initialTab switch
+        {
+            "display" => style.Parent, "behavior" => privacy.Parent, "advanced" => game.Parent, _ => discordTab.Parent
+        };
+        if (initialPage is TabPage page) tabs.SelectedTab = page;
         StyleTool(window);
         window.ShowDialog(this);
     }

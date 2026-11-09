@@ -86,7 +86,7 @@ internal sealed partial class MainForm
             button.Visible = options.Pinned?.Contains(key) == true || streaming && key == "obs";
             button.Text = key == "record" && recording is not null ? L("Detener grabación", "Stop recording") : ActionName(key);
         }
-        travelMode.ForeColor = options.HighContrast ? SystemColors.HighlightText : displayed is { Paused: false } ? Accent : Foreground;
+        travelMode.ForeColor = options.HighContrast ? SystemColors.HighlightText : displayed is { Paused: false } ? shellPalette.Accent : shellPalette.Text;
         travelMode.BackColor = options.HighContrast ? SystemColors.Highlight : Color.Transparent;
         timer.Interval = options.LowPower && !Visible && displayed?.OnJob != true && recording is null && !options.AutoRecord ? 6000 : 2000;
     }
@@ -123,6 +123,7 @@ internal sealed partial class MainForm
             previewLarge.Image?.Dispose();
             previewLarge.Image = new Bitmap(decoded);
             previewArt.Visible = true;
+            SyncHomeArt();
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or ArgumentException) { }
     }
@@ -157,6 +158,8 @@ internal sealed partial class MainForm
             previewBadge.Image?.Dispose();
             previewBadge.Image = LoadPreviewImage(previewBadgeKey);
         }
+        SyncHomeArt();
+        RenderHomePresence(shown, outgoing, age);
         previewArt.Visible = previewLarge.Image is not null || previewBadge.Image is not null;
         previewBadge.Visible = previewBadge.Image is not null;
         if (shown is null)

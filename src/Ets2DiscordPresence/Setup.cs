@@ -8,7 +8,7 @@ namespace Ets2DiscordPresence;
 internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bool ShowCargo = true,
     bool ShowRoute = true, bool ShowCity = true, bool ShowDistance = true,
     bool RouteFirst = false, bool Compact = false, string Language = "es", string DiscordLanguage = "es",
-    string Theme = "system", bool GuideDismissed = false, bool ReaderDisabled = false,
+    string Theme = "night", bool GuideDismissed = false, bool ReaderDisabled = false,
     string? CityCatalog = null, string Profile = "custom", string[]? PresenceOrder = null,
     string[]? PanelOrder = null, string[]? HiddenPanels = null,
     string DriverProfile = "", string[]? Drivers = null, int TextPercent = 100, int RetentionDays = 0,

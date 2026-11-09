@@ -28,7 +28,6 @@ internal sealed partial class MainForm
     private readonly Button toggle = MakeButton("Pausar publicación");
     private readonly Button locate = MakeButton("Buscar ETS2");
     private readonly Button launch = MakeButton("▶  Abrir ETS2");
-    private readonly Button settingsButton = MakeButton("⚙  Ajustes");
     private readonly Panel scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly TableLayoutPanel body = Grid(2);
     private readonly TableLayoutPanel side = Grid(1);
@@ -47,26 +46,13 @@ internal sealed partial class MainForm
 
     private void BuildLayout()
     {
-        var shell = Grid(1);
-        shell.AutoSize = false;
-        shell.Dock = DockStyle.Fill;
-        shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(shell);
-
         var header = Grid(1);
-        header.Padding = new Padding(16, 12, 16, 8);
-        var navigation = ToolBar();
-        var tripButton = Translate(MakeButton(""), "Viaje", "Trip");
-        var replayButton = Translate(MakeButton(""), "Repeticiones", "Replays");
-        tripButton.ForeColor = Accent;
-        tripButton.Click += (_, _) => scroll.AutoScrollPosition = Point.Empty;
-        replayButton.Click += (_, _) => ShowRecordings();
-        navigation.Controls.AddRange([tripButton, Translate(historyButton, "Diario", "Journal"), replayButton,
-            Translate(settingsButton, "Ajustes", "Settings")]);
-        AddRows(header, TextLabel("ETS2 Discord Presence", 16, true), navigation);
-        shell.Controls.Add(header, 0, 0);
-        shell.Controls.Add(scroll, 0, 1);
+        header.Padding = new Padding(24, 16, 24, 8);
+        AddRows(header, UiLabel("Viaje", "Trip", 23, true));
+        var tripPage = new Panel { Dock = DockStyle.Fill };
+        tripPage.Controls.Add(scroll);
+        tripPage.Controls.Add(header);
+        BuildShell(tripPage);
 
         body.Padding = new Padding(16, 0, 16, 12);
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
@@ -176,9 +162,7 @@ internal sealed partial class MainForm
             rollback.Text = L("Volver a la versión anterior…", "Restore previous version…");
             rollback.Visible = File.Exists(AppUpdater.Previous(Application.ExecutablePath));
         };
-        settingsButton.TextChanged += (_, _) => more.Text = L("Más opciones", "More options");
         actions.Controls.Add(tools);
-        historyButton.Click += (_, _) => ShowHistory();
         summaryButton.Click += (_, _) => { if (completedTrip is { } entry) ShowSummary(entry, this); };
         locate.Visible = false;
 
@@ -202,11 +186,13 @@ internal sealed partial class MainForm
         side.Controls.Add(artwork, 0, 2);
         body.Controls.Add(side, 1, 0);
         scroll.ClientSizeChanged += (_, _) => ArrangeLayout();
+        ApplyShellTheme();
         ArrangeLayout();
     }
 
     private void ArrangeLayout()
     {
+        ResizeShell();
         if (body.Controls.Count < 2) return;
         var scale = DeviceDpi / 96f;
         var compact = preferences.Compact && !fullScreen;
@@ -277,10 +263,11 @@ internal sealed partial class MainForm
 
     private void ApplyCompactSize()
     {
+        if (preferences.Compact) Navigate("trip");
         var scale = DeviceDpi / 96f;
         ClientSize = preferences.Compact
             ? new Size((int)(465 * scale), (int)(450 * scale))
-            : new Size((int)(1070 * scale), (int)(710 * scale));
+            : new Size((int)(1160 * scale), (int)(760 * scale));
         ArrangeLayout();
     }
 
@@ -288,7 +275,7 @@ internal sealed partial class MainForm
     {
         travelMode.Text = trip is null ? L("SIN VIAJE ACTIVO", "NO ACTIVE TRIP") : trip.Paused ? L("JUEGO EN PAUSA", "GAME PAUSED")
             : trip.OnJob ? L("ENTREGA EN CURSO", "DELIVERY IN PROGRESS") : L("CONDUCCIÓN LIBRE", "FREE ROAM");
-        travelMode.ForeColor = trip is null || trip.Paused ? Foreground : Accent;
+        travelMode.ForeColor = trip is null || trip.Paused ? shellPalette.Text : shellPalette.Accent;
         cargo.Text = trip is null ? L("Esperando una partida", "Waiting for a game session")
             : trip.OnJob ? (string.IsNullOrWhiteSpace(trip.Cargo) ? L("Entrega sin nombre de carga", "Delivery without cargo name") : trip.Cargo)
             : L("Explorando el mapa", "Exploring the map");
@@ -325,7 +312,7 @@ internal sealed partial class MainForm
     private void SetStatus(Label label, string text, bool active)
     {
         label.Text = text;
-        label.ForeColor = active ? Accent : Foreground;
+        label.ForeColor = active ? shellPalette.Accent : shellPalette.Muted;
     }
 
     private static TableLayoutPanel Grid(int columns) => new()

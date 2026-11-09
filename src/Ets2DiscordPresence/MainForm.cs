@@ -58,8 +58,8 @@ internal sealed partial class MainForm : Form
         this.startMinimized = startMinimized;
         journal = new TripJournal(LocalData.JournalPath(preferences.DriverProfile));
         Text = "ETS2 Discord Presence";
-        ClientSize = new Size(1070, 710);
-        MinimumSize = new Size(400, 390);
+        ClientSize = new Size(1160, 760);
+        MinimumSize = new Size(420, 410);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
@@ -98,7 +98,6 @@ internal sealed partial class MainForm : Form
         toggle.Click += (_, _) => ToggleSharing();
         locate.Click += (_, _) => LocateGame();
         launch.Click += (_, _) => OpenExternal("steam://rungameid/227300");
-        settingsButton.Click += (_, _) => ShowSettings();
         ApplyCompactSize();
         ApplyLanguage();
         ConfigurePanels();
@@ -240,7 +239,9 @@ internal sealed partial class MainForm : Form
                 journal = new TripJournal(LocalData.JournalPath(updated.DriverProfile));
                 completedTrip = null;
             }
+            var themeChanged = preferences.Theme != updated.Theme;
             preferences = updated;
+            if (themeChanged) ApplyShellTheme();
             settingsError = null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -346,7 +347,7 @@ internal sealed partial class MainForm : Form
         RenderTools(trip, telemetry, ready);
         UpdateLiveNotices(telemetry, discordReady);
         RenderDashboard(trip, running, ready, now);
-        tripMap.UpdateMap(trip, cities, English, isLight, isExample, !preferences.Features.LowPower || Visible);
+        tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, !preferences.Features.LowPower || Visible);
         guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
             : demo ? L("Demostración local. El viaje de ejemplo no se publica.", "Local demo. The sample trip stays local.")
             : !preferences.Sharing ? L("La publicación está pausada. Puedes reanudarla desde este panel o la bandeja.", "Publishing is paused. Resume here or from the tray.")
@@ -365,8 +366,8 @@ internal sealed partial class MainForm : Form
                 "Distance or arrival time changed. ETS2 may have recalculated the route.");
         else if (quotaWarning is not null && recording is not null) guidance.Text = quotaWarning;
         var outgoing = PresencePublication.Select(presence, simulated, sharing, discordReady);
-        RenderPreview(outgoing, presence);
         Publish(outgoing);
+        RenderPreview(outgoing, presence);
     }
 
     private bool IsFresh(TelemetrySnapshot snapshot, long now)

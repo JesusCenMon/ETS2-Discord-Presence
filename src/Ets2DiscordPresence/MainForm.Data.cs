@@ -58,6 +58,7 @@ internal sealed partial class MainForm
         gamePrepared = false;
         setupError = null;
         nextGameCheck = 0;
+        ApplyShellTheme();
         ApplyLanguage();
         RegisterPrivacyShortcut();
         ScaleText(this);
