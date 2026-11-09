@@ -1,0 +1,18 @@
+name: Windows CI
+on:
+  pull_request:
+    paths: ['src/**', 'tests/**', 'assets/**', 'data/**', 'scripts/**', 'README.md', '.github/workflows/ci.yml']
+  push:
+    paths: ['src/**', 'tests/**', 'assets/**', 'data/**', 'scripts/**', 'README.md', '.github/workflows/ci.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj --artifacts-path dist/verification
+      - run: ./scripts/build-release.ps1
