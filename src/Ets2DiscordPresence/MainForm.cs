@@ -508,11 +508,13 @@ internal sealed partial class MainForm : Form
         };
         using var telemetry = new StreamReader(AppResources.Open("RENCLOUD-LICENSE.txt"));
         using var cityData = new StreamReader(AppResources.Open("CITY-DATA-LICENSE.txt"));
+        using var fluent = new StreamReader(AppResources.Open("FLUENT-LICENSE.txt"));
         window.Controls.Add(new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
             Text = "RenCloud SCS SDK Plugin\r\n\r\n" + telemetry.ReadToEnd()
                 + "\r\n\r\nETS2 City Coordinate Retriever\r\n\r\n" + cityData.ReadToEnd()
+                + "\r\n\r\nMicrosoft Fluent UI System Icons\r\n\r\n" + fluent.ReadToEnd()
         });
         window.ShowDialog(this);
     }

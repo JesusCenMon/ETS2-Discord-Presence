@@ -48,28 +48,28 @@ internal sealed partial class MainForm
 
         var menu = Grid(1);
         menu.Padding = new Padding(0, 2, 0, 0);
-        AddNavigation(menu, "home", "\uE80F", "Inicio", "Home", () => Navigate("home"));
-        AddNavigation(menu, "trip", "\uE707", "Viaje", "Trip", () => Navigate("trip"));
-        AddNavigation(menu, "journal", "\uE8FD", "Diario", "Journal", ShowHistory);
-        AddNavigation(menu, "replay", "\uE768", "Repeticiones", "Replays", ShowRecordings);
+        AddNavigation(menu, "home", "home", "Inicio", "Home", () => Navigate("home"));
+        AddNavigation(menu, "trip", "vehicle_truck", "Viaje", "Trip", () => Navigate("trip"));
+        AddNavigation(menu, "journal", "book_open", "Diario", "Journal", ShowHistory);
+        AddNavigation(menu, "replay", "play_circle", "Repeticiones", "Replays", ShowRecordings);
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
-        AddNavigation(menu, "display", "\uE7F4", "Apariencia", "Display", () => ShowSettings("display"));
-        AddNavigation(menu, "behavior", "\uE9E9", "Comportamiento", "Behavior", () => ShowSettings("behavior"));
-        AddNavigation(menu, "advanced", "\uE713", "Avanzado", "Advanced", () => ShowSettings("advanced"));
+        AddNavigation(menu, "display", "eye", "Apariencia", "Display", () => ShowSettings("display"));
+        AddNavigation(menu, "behavior", "options", "Comportamiento", "Behavior", () => ShowSettings("behavior"));
+        AddNavigation(menu, "advanced", "settings", "Avanzado", "Advanced", () => ShowSettings("advanced"));
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
-        AddNavigation(menu, "help", "\uE897", "Ayuda", "Help", ShowConnectionGuide);
-        AddNavigation(menu, "about", "\uE946", "Acerca de", "About", ShowAbout);
+        AddNavigation(menu, "help", "question_circle", "Ayuda", "Help", ShowConnectionGuide);
+        AddNavigation(menu, "about", "info", "Acerca de", "About", ShowAbout);
 
         var footer = Grid(1);
         footer.Dock = DockStyle.Bottom;
         sidebarGame.Padding = sidebarDiscord.Padding = new Padding(8, 0, 0, 0);
         AddRows(footer, sidebarGame, sidebarDiscord, new ShellRule { Margin = new Padding(0, 8, 0, 8) });
-        AddNavigation(footer, "github", "\uE943", "GitHub", "GitHub", () => OpenExternal("https://github.com/JesusCenMon/ETS2-Discord-Presence"));
+        AddNavigation(footer, "github", "code", "GitHub", "GitHub", () => OpenExternal("https://github.com/JesusCenMon/ETS2-Discord-Presence"));
         themeStrip = ToolBar();
         themeStrip.Margin = new Padding(0, 6, 0, 0);
-        AddTheme("system", "\uE7F4", "Usar tema del sistema", "Follow system theme");
-        AddTheme("day", "\uE706", "Tema claro", "Light theme");
-        AddTheme("night", "\uE708", "Tema oscuro", "Dark theme");
+        AddTheme("system", "desktop", "Usar tema del sistema", "Follow system theme");
+        AddTheme("day", "weather_sunny", "Tema claro", "Light theme");
+        AddTheme("night", "weather_moon", "Tema oscuro", "Dark theme");
         AddRows(footer, themeStrip);
         var menuViewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         menuViewport.Controls.Add(menu);
@@ -85,9 +85,9 @@ internal sealed partial class MainForm
         Navigate("home");
     }
 
-    private void AddNavigation(TableLayoutPanel grid, string key, string glyph, string es, string en, Action action)
+    private void AddNavigation(TableLayoutPanel grid, string key, string iconName, string es, string en, Action action)
     {
-        var button = Translate(new NavigationButton(glyph), es, en);
+        var button = Translate(new NavigationButton(iconName), es, en);
         button.Width = 1;
         button.Dock = DockStyle.Top;
         button.Click += (_, _) => action();
@@ -95,9 +95,9 @@ internal sealed partial class MainForm
         AddRows(grid, button);
     }
 
-    private void AddTheme(string key, string glyph, string es, string en)
+    private void AddTheme(string key, string iconName, string es, string en)
     {
-        var button = Translate(new NavigationButton(glyph) { IconsOnly = true, Width = 43, Height = 34 }, es, en);
+        var button = Translate(new NavigationButton(iconName) { IconsOnly = true, Width = 43, Height = 34 }, es, en);
         button.Click += (_, _) => SavePreferences(preferences with { Theme = key });
         themeButtons.Add(key, button);
         themeStrip.Controls.Add(button);
@@ -378,17 +378,18 @@ internal sealed partial class MainForm
 
     private sealed class NavigationButton : Button
     {
-        private readonly string glyph;
-        private readonly Font iconFont = new("Segoe MDL2 Assets", 13);
+        private readonly Bitmap icon;
         private readonly Font labelFont = new("Segoe UI", 10.5f);
         private bool selected;
         private bool hovered;
         public bool IconsOnly;
         public ShellPalette Palette = ShellPalette.Dark;
 
-        public NavigationButton(string glyph)
+        public NavigationButton(string iconName)
         {
-            this.glyph = glyph;
+            using var stream = AppResources.Open($"fluent.{iconName}.png");
+            using var bitmap = Image.FromStream(stream);
+            icon = new Bitmap(bitmap);
             Font = labelFont;
             Height = 43;
             Margin = new Padding(0, 0, 0, 3);
@@ -420,8 +421,17 @@ internal sealed partial class MainForm
                 g.FillPath(brush, plate);
             }
             var iconBox = IconsOnly ? ClientRectangle : new Rectangle(5, 0, 32, Height);
-            TextRenderer.DrawText(g, glyph, iconFont, iconBox, selected ? Palette.Accent : Palette.Muted,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            var side = Math.Max(1, Math.Min(iconBox.Width, (int)Math.Round(21 * DeviceDpi / 96d)));
+            var bounds = new Rectangle(iconBox.X + (iconBox.Width - side) / 2, (iconBox.Height - side) / 2, side, side);
+            var ink = selected ? Palette.Accent : Palette.Muted;
+            using var tint = new System.Drawing.Imaging.ImageAttributes();
+            tint.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix
+            {
+                Matrix00 = 0, Matrix11 = 0, Matrix22 = 0,
+                Matrix40 = ink.R / 255f, Matrix41 = ink.G / 255f, Matrix42 = ink.B / 255f
+            });
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(icon, bounds, 0, 0, icon.Width, icon.Height, GraphicsUnit.Pixel, tint);
             if (!IconsOnly)
                 TextRenderer.DrawText(g, Text, Font, new Rectangle(43, 0, Math.Max(0, Width - 47), Height),
                     selected ? Palette.Text : Palette.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
@@ -433,7 +443,7 @@ internal sealed partial class MainForm
         {
             if (disposing)
             {
-                iconFont.Dispose();
+                icon.Dispose();
                 labelFont.Dispose();
             }
             base.Dispose(disposing);
