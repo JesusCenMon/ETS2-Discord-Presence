@@ -4,7 +4,7 @@ namespace Ets2DiscordPresence;
 
 internal sealed class TripMap : Control
 {
-    private readonly List<(double X, double Z, bool Break, float? Speed, bool Event)> trail = [];
+    private readonly List<(double X, double Z, bool Break, float? Speed, string? Event)> trail = [];
     private IReadOnlyList<MapCity> cities = [];
     private MapCity? destination;
     private MapCity? origin;
@@ -57,7 +57,7 @@ internal sealed class TripMap : Control
         if (truck is not null) fixedCenter ??= (truck.X, truck.Z);
     }
 
-    private void AddPoint(TelemetrySnapshot point, bool discontinuity)
+    private void AddPoint(TelemetrySnapshot point, bool discontinuity, string? marker)
     {
         var previous = trail.LastOrDefault();
         if (!discontinuity)
@@ -66,15 +66,30 @@ internal sealed class TripMap : Control
             var dz = point.Z - previous.Z;
             if (dx * dx + dz * dz >= 100) bearing = Math.Atan2(dx, -dz);
         }
-        var signals = point.Signals;
-        var marker = signals is not null && (signals.Ferry != lastFerry || point.OnJob && signals.Loaded && !lastLoaded);
-        lastFerry = signals?.Ferry == true;
-        lastLoaded = point.OnJob && signals?.Loaded == true;
-        trail.Add((point.X, point.Z, discontinuity, signals?.Speed, marker));
+        trail.Add((point.X, point.Z, discontinuity, point.Signals?.Speed, marker));
+        if (trail.Count <= 4000) return;
+        var removable = trail.FindIndex(item => item.Event is null && !item.Break);
+        if (removable < 0) return;
+        trail.RemoveAt(removable);
     }
 
-    private bool lastFerry;
-    private bool lastLoaded;
+    private TelemetrySnapshot? previousSample;
+
+    private bool NeedsPoint(TelemetrySnapshot point)
+    {
+        if (trail.Count == 0) return true;
+        var last = trail[^1];
+        var dx = point.X - last.X;
+        var dz = point.Z - last.Z;
+        var length = dx * dx + dz * dz;
+        if (length >= 625) return true;
+        if (trail.Count < 2 || length < 64) return false;
+        var earlier = trail[^2];
+        var oldX = last.X - earlier.X;
+        var oldZ = last.Z - earlier.Z;
+        var dot = oldX * dx + oldZ * dz;
+        return dot <= 0 || dot * dot < .88 * (oldX * oldX + oldZ * oldZ) * length;
+    }
     private TelemetrySnapshot? truck;
     private bool interrupted = true;
     private bool english;
@@ -105,11 +120,12 @@ internal sealed class TripMap : Control
     {
         trail.Clear();
         interrupted = true;
-        lastLoaded = lastFerry = false;
-        var stride = Math.Max(1, index / 3999 + 1);
-        for (var at = 0; at <= index; at = Math.Min(index, at + stride))
+        TelemetrySnapshot? previous = null;
+        for (var at = 0; at <= index; at++)
         {
             var frame = frames[at];
+            var marker = frame.Marker is { Length: > 0 } ? "marker" : TelemetryReplay.DetectEvents(frame.Trip, previous).LastOrDefault();
+            previous = frame.Trip;
             if (frame.Trip is not { Paused: false } point || !double.IsFinite(point.X) || !double.IsFinite(point.Z)
                 || Math.Abs(point.X) > 2_000_000 || Math.Abs(point.Z) > 2_000_000)
             {
@@ -118,14 +134,13 @@ internal sealed class TripMap : Control
             else
             {
                 var last = trail.LastOrDefault();
-                if (interrupted || last.X != point.X || last.Z != point.Z)
+                if (interrupted || marker is not null || NeedsPoint(point) || at == index)
                 {
                     var jump = Math.Abs(last.X - point.X) + Math.Abs(last.Z - point.Z) > 4000;
-                    AddPoint(point, interrupted || jump);
+                    AddPoint(point, interrupted || jump, marker);
                     interrupted = false;
                 }
             }
-            if (at == index) break;
         }
         Invalidate();
     }
@@ -203,6 +218,13 @@ internal sealed class TripMap : Control
         SetStyle(ControlStyles.Selectable, true);
     }
 
+    public void UpdateReplayTruck(TelemetrySnapshot? position)
+    {
+        truck = position is { } value && double.IsFinite(value.X) && double.IsFinite(value.Z)
+            && Math.Abs(value.X) <= 2_000_000 && Math.Abs(value.Z) <= 2_000_000 ? value : null;
+        Invalidate();
+    }
+
     public void UpdateMap(TelemetrySnapshot? snapshot, CityLookup catalog, bool isEnglish, bool isLight, bool demo, bool repaint = true)
     {
         english = isEnglish;
@@ -220,6 +242,8 @@ internal sealed class TripMap : Control
             && Math.Abs(value.X) <= 2_000_000 && Math.Abs(value.Z) <= 2_000_000 ? value : null;
         origin = truck?.OnJob == true ? catalog.FindDestination(truck.SourceCity, null) : null;
         destination = truck?.OnJob == true ? catalog.FindDestination(truck.DestinationCity, truck.Signals?.DestinationId) : null;
+        var marker = TelemetryReplay.DetectEvents(truck, previousSample).LastOrDefault();
+        previousSample = truck;
         if (truck is null) interrupted = true;
         else if (!truck.Paused && !demo)
         {
@@ -227,11 +251,10 @@ internal sealed class TripMap : Control
             var dx = truck.X - last.X;
             var dz = truck.Z - last.Z;
             var change = dx * dx + dz * dz;
-            if (trail.Count == 0 || interrupted || change >= 100)
+            if (interrupted || marker is not null || NeedsPoint(truck))
             {
-                AddPoint(truck, interrupted || change > 16_000_000);
+                AddPoint(truck, interrupted || change > 16_000_000, marker);
                 interrupted = false;
-                if (trail.Count > 4000) trail.RemoveAt(0);
             }
         }
         if (repaint) Invalidate();
@@ -327,8 +350,20 @@ internal sealed class TripMap : Control
         if (showTerminals && origin is { } start) Marker(start.Name, Place(start.X, start.Z), label, 8);
         if (showTerminals && destination is { } target) Marker(target.Name, Place(target.X, target.Z), label, 8);
         if (showEvents)
-            foreach (var point in trail.Where(point => point.Event).TakeLast(24))
-                Marker(english ? "Event" : "Evento", Place(point.X, point.Z), accent, 6);
+            foreach (var point in trail.Where(point => point.Event is not null).TakeLast(24))
+            {
+                var eventCaption = point.Event switch
+                {
+                    "pickup" => english ? "Pickup" : "Recogida", "delivery" => english ? "Delivery" : "Entrega",
+                    "fuel" => english ? "Refueling" : "Repostaje", "rest" => english ? "Rest" : "Descanso",
+                    "ferry" => "Ferry", _ => english ? "Marker" : "Marcador"
+                };
+                var symbol = point.Event switch
+                {
+                    "pickup" => "↑", "delivery" => "✓", "fuel" => "+", "rest" => "Ⅱ", "ferry" => "≈", _ => "◆"
+                };
+                Marker($"{symbol} {eventCaption}", Place(point.X, point.Z), accent, 6);
+            }
         if (showCities)
             foreach (var city in cities.Where(city => ClientRectangle.Contains(Point.Round(Place(city.X, city.Z))))
                 .OrderBy(city => Math.Abs(centerX - city.X) + Math.Abs(centerZ - city.Z)).Take(12))

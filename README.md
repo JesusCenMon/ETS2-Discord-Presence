@@ -29,7 +29,7 @@ El mapa muestra posiciones aproximadas, el destino y el recorrido observado dura
 
 En **Ajustes → Juego** puedes comprobar la versión y compatibilidad del lector por separado, repararlo o retirarlo con ETS2 cerrado, y activar avisos de combustible bajo. Los datos del camión aparecen cuando el juego los facilita.
 
-En **Ajustes → Datos locales** puedes crear o restaurar una copia de los diarios, ajustes y catálogos. Las grabaciones se gestionan por separado y puedes elegir cuánto tiempo conservarlas. El modo portátil usa la carpeta `ETS2PresenceData` junto al ejecutable a partir del siguiente inicio. Para llevar el diario a la otra carpeta, exporta una copia y restáurala después de volver a abrir la app.
+En **Ajustes → Datos locales** puedes crear o restaurar una copia de los diarios, ajustes y catálogos. Puedes incluir las grabaciones cerradas en una copia manual y elegir cuánto tiempo conservarlas. El modo portátil usa la carpeta `ETS2PresenceData` junto al ejecutable a partir del siguiente inicio. Al cambiar de modo puedes copiar los ajustes, diarios y catálogos antes de volver a abrir la app.
 
 La pausa se guarda y también se controla desde la bandeja de Windows. «Ver viaje rápido» muestra el destino, la distancia y el estado de Discord. En **Ajustes → Privacidad** puedes elegir un atajo que oculta temporalmente la ruta y la ciudad en Discord. En **Más opciones → Tarjeta OBS** se abre una ventana independiente con la ruta y distancia. Puedes capturar esa ventana en OBS y aplicar un filtro de clave de color magenta si el método de captura muestra el borde transparente como un color sólido. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
 
@@ -37,11 +37,15 @@ Al abrir la app se comprueba si hay una versión más reciente en GitHub. Cuando
 
 La actividad aparece como **Euro Truck Simulator 2** en Discord. La imagen cambia su indicador según estés haciendo una entrega, explorando o en pausa, y el temporizador cuenta desde que se detecta la actividad. Ambos se pueden desactivar desde **Ajustes → Discord**. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
 
-## Novedades de la v0.6.0
+## Última versión · v0.7.2
+
+Mejoras de fiabilidad en telemetría, actualizaciones y OBS. El canal **Stable** muestra versiones estables. **Preview** también muestra versiones de prueba.
+
+## Novedades anteriores
 
 - **Panel.** Cambia entre Completo, Conducción y Transmisión desde Más opciones. También hay una ventana flotante, búsqueda en Ajustes, botones fijables, formato de hora, millas y avisos configurables.
 - **Mapa.** El menú del mapa incluye rumbo, seguimiento, búsqueda de ciudades, capas y recorrido completo. La escala usa unidades del mapa del juego. El aviso de ruta indica cambios grandes en la distancia o llegada estimada.
-- **Discord.** Puedes personalizar el texto y el temporizador, ocultar toda la actividad temporalmente, aplicar reglas de ubicación y usar un atajo de pausa total. Los países usan el arte general hasta que se añadan imágenes en `data/country_art.json`.
+- **Discord.** Puedes personalizar el texto y el temporizador, ocultar toda la actividad temporalmente, aplicar reglas de ubicación y usar un atajo de pausa total. La actividad usa la imagen general del juego.
 - **OBS.** En Ajustes → OBS puedes copiar una dirección local y pegarla en una fuente de navegador. Puedes elegir qué datos mostrar, tamaño, posición y texto de espera. La fuente funciona mientras la app esté abierta.
 - **Grabaciones y diario.** Activa la grabación automática por entrega o pausa una grabación manualmente. Usa Ctrl + Alt + F12 para marcar un momento mientras grabas, y abre la repetición para nombrarlo. También puedes recortar una copia, comparar dos repeticiones, consultar estadísticas mensuales por camión y mover viajes entre conductores. La papelera conserva los elementos durante 30 días.
 - **Mantenimiento.** Ajustes incluye límite de espacio y copias programadas mientras la app está abierta. La guía de conexión permite comprobar la actividad y exportar un informe sin rutas personales. Más opciones incluye la prueba local de conducción, entrega, pausa y desconexión.
@@ -65,7 +69,7 @@ dotnet test tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj -c 
 ./scripts/build-release.ps1
 ```
 
-El script ejecuta las pruebas de reproducción y del lector antes de crear `dist/standalone/ETS2DiscordPresence.exe`.
+El script verifica la versión, el tag de los recursos de Discord y el encabezado del README. Ejecuta la suite antes de generar el ejecutable y su archivo SHA-256 en `dist/standalone`.
 
 ## Alcance y créditos
 

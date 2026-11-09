@@ -125,8 +125,9 @@ internal sealed partial class MainForm : Form
     {
         if (startMinimized) Hide();
         AppUpdater.CleanWorker(Application.ExecutablePath);
-        if (AppUpdater.ConsumeFailure(Application.ExecutablePath))
-            settingsError = L("La actualización no se pudo completar.", "The update could not be completed.");
+        if (AppUpdater.ConsumeFailure(Application.ExecutablePath) is { } failure)
+            settingsError = L("La actualización no se pudo completar.", "The update could not be completed.")
+                + (failure.Length == 0 ? "" : $" {failure}");
         discord.OnReady += (_, _) =>
         {
             discordWasReady = true;
@@ -152,13 +153,16 @@ internal sealed partial class MainForm : Form
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
 
+        await RefreshUpdateAsync();
+    }
+
+    private async Task RefreshUpdateAsync()
+    {
         try
         {
-            var release = await DesktopServices.CheckForUpdateAsync(lifetime.Token);
-            if (release is { } found && !IsDisposed)
-            {
-                availableUpdate = found;
-            }
+            var preview = preferences.PreviewUpdates;
+            var release = await DesktopServices.CheckForUpdateAsync(preview, lifetime.Token);
+            if (!IsDisposed && preview == preferences.PreviewUpdates) availableUpdate = release;
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
         {
@@ -240,7 +244,13 @@ internal sealed partial class MainForm : Form
                 completedTrip = null;
             }
             var themeChanged = preferences.Theme != updated.Theme;
+            var channelChanged = preferences.PreviewUpdates != updated.PreviewUpdates;
             preferences = updated;
+            if (channelChanged)
+            {
+                availableUpdate = null;
+                _ = RefreshUpdateAsync();
+            }
             if (themeChanged) ApplyShellTheme();
             settingsError = null;
         }
@@ -326,11 +336,8 @@ internal sealed partial class MainForm : Form
         };
         var isExample = demo || demoScenario is not null;
         var displayedCity = demoScenario == "roam" ? "Madrid" : isExample ? "Chambéry" : nearby;
-        var presenceSettings = privateDestination ? preferences with { ShowRoute = false, ShowCity = false } : preferences;
-        if (trip?.OnJob == false && preferences.Features.HideRoamingLocation)
-            presenceSettings = presenceSettings with { ShowCity = false };
-        if (trip?.OnJob == true && preferences.Features.HideDeliveryLocation)
-            presenceSettings = presenceSettings with { ShowCity = false, ShowRoute = false };
+        var presenceSettings = PresencePrivacy.Apply(preferences, trip?.OnJob, privateDestination);
+        var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
         var country = demoScenario == "roam" ? "ES" : isExample ? "FR" : currentCountry;
         var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, presenceSettings, country);
         UpdateActivity(telemetry);
@@ -344,7 +351,7 @@ internal sealed partial class MainForm : Form
             };
         RenderTrip(trip, displayedCity, presence);
         RenderExtras(trip, now, running, ready);
-        RenderTools(trip, telemetry, ready);
+        RenderTools(trip, telemetry, ready, sharing && !simulated);
         UpdateLiveNotices(telemetry, discordReady);
         RenderDashboard(trip, running, ready, now);
         tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, !preferences.Features.LowPower || Visible);
@@ -356,7 +363,6 @@ internal sealed partial class MainForm : Form
             : setupError ?? (restartNeeded ? L("Reinicia ETS2 para activar la lectura del viaje.", "Restart ETS2 to enable trip data.")
                 : frozen ? L("El juego dejó de enviar datos. Se retiró la actividad anterior.", "The game stopped sending data. The previous activity was cleared.")
                 : running ? (English ? L("Entra a una partida.", "Enter a game session or check the reader in Settings.") : readError ?? "Entra a una partida.") : L("Abre ETS2 para empezar.", "Launch ETS2 to begin.")));
-        var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
         if (!sharing && preferences.Sharing)
             guidance.Text = L("La actividad está oculta temporalmente.", "Activity is temporarily hidden.");
         else if (demoScenario is not null)
@@ -394,7 +400,6 @@ internal sealed partial class MainForm : Form
 
     private void TrackCountry(string? country)
     {
-        if (country is null) currentCountry = null;
         if (country != countryCandidate)
         {
             countryCandidate = country;

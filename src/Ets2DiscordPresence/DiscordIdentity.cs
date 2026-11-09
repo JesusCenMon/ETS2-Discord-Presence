@@ -3,7 +3,8 @@ namespace Ets2DiscordPresence;
 internal static class DiscordIdentity
 {
     internal const string ActivityName = "Euro Truck Simulator 2";
-    private const string ArtRoot = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/v0.5.0/assets/";
+    internal const string AssetsTag = "v0.7.2";
+    private const string ArtRoot = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/" + AssetsTag + "/assets/";
     internal const string ActivityImage = ArtRoot + "hero-truck.png";
     private static readonly Lazy<IReadOnlyDictionary<string, string>> CountryImages = new(LoadCountryImages);
 
@@ -13,12 +14,21 @@ internal static class DiscordIdentity
     private static IReadOnlyDictionary<string, string> LoadCountryImages()
     {
         using var file = AppResources.Open("country_art.json");
-        var values = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(file) ?? [];
+        return ReadCountryImages(file);
+    }
+
+    internal static IReadOnlyDictionary<string, string> ReadCountryImages(Stream file)
+    {
+        using var manifest = System.Text.Json.JsonDocument.Parse(file);
         var images = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (code, image) in values)
-            if (Countries.Normalize(code) is { } key && image is { Length: > 0 and <= 256 }
-                && Uri.TryCreate(image, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps)
-                images[key] = image;
+        foreach (var item in manifest.RootElement.EnumerateObject())
+        {
+            if (Countries.Normalize(item.Name) != item.Name || item.Value.ValueKind != System.Text.Json.JsonValueKind.String
+                || item.Value.GetString() is not { Length: > 0 and <= 256 } image
+                || !Uri.TryCreate(image, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+                || uri.Host.Length == 0 || uri.UserInfo.Length != 0 || !images.TryAdd(item.Name, image))
+                throw new InvalidDataException("Invalid or duplicate country artwork entry.");
+        }
         return images;
     }
 

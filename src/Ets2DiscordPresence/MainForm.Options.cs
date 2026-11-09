@@ -61,6 +61,58 @@ internal sealed partial class MainForm
         var position = Choice(obs, L("Posición en la fuente de navegador", "Browser source position"),
             [L("Izquierda", "Left"), L("Centro", "Center"), L("Derecha", "Right")],
             current.ObsPosition switch { "center" => 1, "right" => 2, _ => 0 });
+        var fontSizes = new[] { 16, 22, 28, 36 };
+        var font = Choice(obs, L("Tamaño de letra", "Font size"), fontSizes.Select(value => $"{value} px").ToArray(),
+            Math.Max(0, Array.IndexOf(fontSizes, current.ObsFont)));
+        var opacities = new[] { 0, 50, 75, 93, 100 };
+        var opacity = Choice(obs, L("Opacidad del fondo", "Background opacity"), opacities.Select(value => $"{value} %").ToArray(),
+            Math.Max(0, Array.IndexOf(opacities, current.ObsOpacity)));
+        var radii = new[] { 0, 8, 16, 24 };
+        var radius = Choice(obs, L("Redondeo de bordes", "Corner rounding"), radii.Select(value => $"{value} px").ToArray(),
+            Math.Max(0, Array.IndexOf(radii, current.ObsRadius)));
+        BrowserOverlay? previewServer = null;
+        var previewTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        owner.FormClosed += (_, _) =>
+        {
+            previewTimer.Dispose();
+            previewServer?.Dispose();
+        };
+        AppOptions PreviewOptions() => preferences.Features with
+        {
+            ObsRoute = obsRoute.Checked, ObsDistance = obsDistance.Checked, ObsWaiting = waiting.Text.Trim(),
+            ObsSize = sizes[obsSize.SelectedIndex], ObsFont = fontSizes[font.SelectedIndex],
+            ObsOpacity = opacities[opacity.SelectedIndex], ObsRadius = radii[radius.SelectedIndex],
+            ObsPosition = position.SelectedIndex switch { 1 => "center", 2 => "right", _ => "left" }
+        };
+        void RefreshPreview()
+        {
+            if (previewServer is null) return;
+            var options = PreviewOptions();
+            var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow)
+                && !demo && demoScenario is null && !replayOpen;
+            var live = liveSnapshot;
+            var visibility = PresencePrivacy.Apply(preferences with { Options = options }, live?.OnJob, privateDestination);
+            var distance = live?.RemainingKm is { } km ? AppOptions.Distance(km, options.Miles) : "";
+            var idle = live?.Paused == true ? L("En pausa", "Paused") : L("Sin ruta activa", "No active route");
+            var (routeText, distanceText) = PresencePrivacy.Overlay(visibility, live, sharing, idle, distance);
+            previewServer.Update(routeText, distanceText, options);
+        }
+        previewTimer.Tick += (_, _) => RefreshPreview();
+        AddAction(obs, L("Vista previa de la fuente en el navegador", "Preview the source in browser"), () =>
+        {
+            try
+            {
+                previewServer ??= new BrowserOverlay(Guid.NewGuid().ToString("N"));
+                RefreshPreview();
+                previewTimer.Start();
+                OpenExternal(previewServer.Url);
+            }
+            catch (System.Net.Sockets.SocketException)
+            {
+                MessageBox.Show(owner, L("No hay un puerto disponible para la vista previa.", "No port is available for the preview."), Text);
+            }
+        });
+        AddAction(obs, L("Regenerar dirección OBS", "Regenerate OBS URL"), () => RegenerateObsUrl(owner));
         AddAction(obs, L("Abrir ventana OBS", "Open OBS window"), ShowCaptureCard);
         AddAction(obs, L("Copiar dirección de la fuente OBS", "Copy OBS browser source URL"), () => CopyObsUrl(owner));
         var auto = Check(data, L("Grabar automáticamente cada entrega", "Automatically record each delivery"), current.AutoRecord);
@@ -87,6 +139,7 @@ internal sealed partial class MainForm
             RestNotice = rest.Checked, LowPower = lowPower.Checked, ReconnectNotice = reconnect.Checked,
             SessionTimer = timerMode.SelectedIndex == 1, HideRoamingLocation = hideRoaming.Checked, HideDeliveryLocation = hideDelivery.Checked, PauseShortcut = pauseKey.Checked,
             RoamTemplate = roam.Text.Trim(), DeliveryTemplate = delivery.Text.Trim(), ObsWaiting = waiting.Text.Trim(),
+            ObsFont = fontSizes[font.SelectedIndex], ObsOpacity = opacities[opacity.SelectedIndex], ObsRadius = radii[radius.SelectedIndex],
             ObsSize = sizes[obsSize.SelectedIndex], ObsRoute = obsRoute.Checked, ObsDistance = obsDistance.Checked,
             ObsBrowser = browser.Checked || !current.ObsBrowser && preferences.Features.ObsBrowser,
             ObsPosition = position.SelectedIndex switch { 1 => "center", 2 => "right", _ => "left" },

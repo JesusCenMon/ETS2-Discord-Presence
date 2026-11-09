@@ -30,6 +30,9 @@ internal sealed partial class MainForm
             var file = Path.Combine(LocalData.Recordings, $"ETS2-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}-{suffix}.jsonl");
             recording = new StreamWriter(new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read));
             recordingPath = file;
+            recordingFrames = 0;
+            TelemetryReplay.WriteHeader(recording);
+            recording.Flush();
             recordingStarted = now;
             recordingFrames = 0;
             RegisterPrivacyShortcut();
@@ -39,6 +42,7 @@ internal sealed partial class MainForm
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            if (recording is not null) FinishRecording();
             settingsError = L("No se pudo abrir el archivo de grabación.", "Could not open the recording file.");
             return false;
         }
@@ -53,7 +57,7 @@ internal sealed partial class MainForm
         {
             storedBytes = LocalData.RecordingFiles().Where(path => path != recordingPath)
                 .Concat(Directory.Exists(LocalData.RecordingTrash)
-                    ? Directory.EnumerateFiles(LocalData.RecordingTrash, "ETS2-*.jsonl") : [])
+                    ? Directory.EnumerateFiles(LocalData.RecordingTrash, "ETS2-*.jsonl*") : [])
                 .Sum(path => new FileInfo(path).Length);
             nextQuotaCheck = now + 10_000;
         }

@@ -20,6 +20,8 @@ internal sealed partial class MainForm
         var privacy = AddTab(tabs, L("Privacidad", "Privacy"));
         var game = AddTab(tabs, L("Juego", "Game"));
         var style = AddTab(tabs, L("Apariencia", "Appearance"));
+        var updateChannel = Choice(game, L("Canal de actualizaciones", "Update channel"),
+            ["Stable", "Preview"], preferences.PreviewUpdates ? 1 : 0);
         var data = AddTab(tabs, L("Datos locales", "Local data"));
         int[] textSizes = [85, 100, 115, 135];
         var getFeatures = BuildFeatureSettings(window, tabs, style, discordTab, privacy, game, data);
@@ -130,6 +132,9 @@ internal sealed partial class MainForm
         Preview();
 
         var catalogs = Path.Combine(TripJournal.DataFolder, "catalogs");
+        AddRows(game, TextLabel(activeCatalog is null
+            ? L($"Catálogo incluido · {cities.Cities.Count} ciudades", $"Built-in catalog · {cities.Cities.Count} cities")
+            : L($"Catálogo activo · {activeCatalog} · {cities.Cities.Count} ciudades", $"Active catalog · {activeCatalog} · {cities.Cities.Count} cities"), 10));
         var catalog = Choice(game, L("Catálogo de ciudades", "City catalog"), [L("Incluido · ETS2", "Built-in · ETS2")], 0);
         void ListCatalogs(string? selected)
         {
@@ -147,7 +152,15 @@ internal sealed partial class MainForm
             {
                 using var file = File.OpenRead(picker.FileName);
                 if (file.Length > 5_000_000) throw new InvalidDataException();
-                _ = new CityLookup(file);
+                var imported = new CityLookup(file);
+                var report = L($"Ciudades válidas: {imported.Cities.Count}\nRechazadas: {imported.Rejected}\nPaíses reconocidos: {imported.RecognizedCountries}\nCon gameName: {imported.Identified}\nIdentificadores duplicados: {imported.DuplicateIds}\nPosiciones duplicadas: {imported.DuplicatePositions}",
+                    $"Valid cities: {imported.Cities.Count}\nRejected: {imported.Rejected}\nRecognized countries: {imported.RecognizedCountries}\nWith gameName: {imported.Identified}\nDuplicate identifiers: {imported.DuplicateIds}\nDuplicate positions: {imported.DuplicatePositions}");
+                if (imported.DuplicateIds + imported.DuplicatePositions > 0)
+                {
+                    MessageBox.Show(window, report + "\n\n" + L("Corrige los duplicados antes de importar.", "Fix duplicates before importing."), Text);
+                    return;
+                }
+                if (!Confirm(window, report + "\n\n" + L("¿Importar el catálogo?", "Import the catalog?"))) return;
                 file.Position = 0;
                 Directory.CreateDirectory(catalogs);
                 var name = $"{Path.GetFileNameWithoutExtension(picker.FileName)}-{Guid.NewGuid():N}"[..Math.Min(Path.GetFileNameWithoutExtension(picker.FileName).Length + 9, 80)] + ".json";
@@ -184,6 +197,7 @@ internal sealed partial class MainForm
             {
                 Language = language.SelectedIndex == 1 ? "en" : "es",
                 Theme = ThemeValue(),
+                PreviewUpdates = updateChannel.SelectedIndex == 1,
                 TextPercent = textSizes[textSize.SelectedIndex],
                 FuelThreshold = thresholds[fuel.SelectedIndex],
                 PrivacyShortcut = shortcuts.SelectedIndex,

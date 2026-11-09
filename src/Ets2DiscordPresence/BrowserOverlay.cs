@@ -7,21 +7,44 @@ namespace Ets2DiscordPresence;
 
 internal sealed class BrowserOverlay : IDisposable
 {
-    private const int Port = 17832;
-    private readonly TcpListener listener = new(IPAddress.Loopback, Port);
+    internal const int FirstPort = 17832;
+    private const int SchemaVersion = 1;
+    private readonly int port;
+    private readonly TcpListener listener;
     private readonly CancellationTokenSource stop = new();
-    private readonly string path;
+    private volatile string path;
     private volatile string state = "{}";
 
     public BrowserOverlay(string key)
     {
         path = "/" + key;
-        listener.Start(8);
+        listener = Bind();
+        port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var cancellation = stop.Token;
         _ = Task.Run(() => ServeAsync(cancellation));
     }
 
-    public string Url => $"http://127.0.0.1:{Port}{path}";
+    public string Url => $"http://127.0.0.1:{port}{path}";
+
+    public void Rotate(string key) => path = "/" + key;
+
+    private static TcpListener Bind()
+    {
+        for (var candidate = FirstPort; candidate < FirstPort + 6; candidate++)
+        {
+            var server = new TcpListener(IPAddress.Loopback, candidate) { ExclusiveAddressUse = true };
+            try
+            {
+                server.Start(8);
+                return server;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied)
+            {
+                server.Stop();
+            }
+        }
+        throw new SocketException((int)SocketError.AddressAlreadyInUse);
+    }
 
     public void Update(string route, string distance, AppOptions options)
     {
@@ -30,6 +53,9 @@ internal sealed class BrowserOverlay : IDisposable
             route = options.ObsRoute ? route : "",
             distance = options.ObsDistance ? distance : "",
             scale = Math.Clamp(options.ObsSize, 75, 150) / 100d,
+            font = Math.Clamp(options.ObsFont, 14, 42),
+            opacity = Math.Clamp(options.ObsOpacity, 0, 100) / 100d,
+            radius = Math.Clamp(options.ObsRadius, 0, 24),
             align = options.ObsPosition switch { "right" => "flex-end", "center" => "center", _ => "flex-start" }
         });
     }
@@ -63,13 +89,16 @@ internal sealed class BrowserOverlay : IDisposable
             request = Encoding.ASCII.GetString(input, 0, length);
         }
         var lines = request.Split("\r\n");
-        var hostOk = lines.Any(line => line.Equals($"Host: 127.0.0.1:{Port}", StringComparison.OrdinalIgnoreCase));
+        var hostOk = lines.Any(line => line.Equals($"Host: 127.0.0.1:{port}", StringComparison.OrdinalIgnoreCase));
         var target = lines[0].Split(' ');
         var route = hostOk && target is ["GET", var url, "HTTP/1.1"] ? url : "";
-        var json = route == path + "/state";
-        var valid = json || route == path;
-        var payload = Encoding.UTF8.GetBytes(json ? state : valid ? Html : "Not found");
-        var contentType = json ? "application/json" : "text/html";
+        var currentPath = path;
+        var health = route is "/health" || route == currentPath + "/health";
+        var json = route == currentPath + "/state";
+        var valid = json || health || route == currentPath;
+        var payload = Encoding.UTF8.GetBytes(health ? JsonSerializer.Serialize(new { schemaVersion = SchemaVersion })
+            : json ? state : valid ? Html : "Not found");
+        var contentType = json || health ? "application/json" : "text/html";
         var status = valid ? "200 OK" : "404 Not Found";
         var header = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Type: {contentType}; charset=utf-8\r\n"
             + $"Content-Length: {payload.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n"
@@ -103,10 +132,13 @@ internal sealed class BrowserOverlay : IDisposable
                 document.querySelector('#route').textContent = data.route || '';
                 document.querySelector('#distance').textContent = data.distance || '';
                 document.body.style.justifyContent = data.align || 'flex-start';
-                card.style.zoom = data.scale || 1;
+                card.style.zoom = data.scale ?? 1;
+                card.style.fontSize = (data.font ?? 22) + 'px';
+                card.style.backgroundColor = 'rgba(28,37,48,' + (data.opacity ?? .93) + ')';
+                card.style.borderRadius = (data.radius ?? 8) + 'px';
                 card.hidden = !data.route && !data.distance;
             } catch { card.hidden = true; }
-            finally { setTimeout(refresh, 1500); }
+            finally { setTimeout(refresh, 500); }
         }
         refresh();
         </script></body></html>

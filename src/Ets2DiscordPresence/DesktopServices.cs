@@ -18,14 +18,19 @@ internal static class DesktopServices
     public static bool StartsWithWindows()
     {
         using var key = Registry.CurrentUser.OpenSubKey(StartupKey);
-        return key?.GetValue(StartupName) is string;
+        return MatchesStartup(key?.GetValue(StartupName) as string, Application.ExecutablePath);
     }
+
+    private static string StartupCommand(string executable) => $"\"{executable}\" --minimized";
+
+    internal static bool MatchesStartup(string? value, string executable) =>
+        string.Equals(value?.Trim(), StartupCommand(executable), StringComparison.OrdinalIgnoreCase);
 
     public static void SetStartup(bool enabled)
     {
         using var key = Registry.CurrentUser.CreateSubKey(StartupKey);
         if (enabled)
-            key.SetValue(StartupName, $"\"{Application.ExecutablePath}\" --minimized");
+            key.SetValue(StartupName, StartupCommand(Application.ExecutablePath));
         else
             key.DeleteValue(StartupName, throwOnMissingValue: false);
     }
@@ -46,7 +51,7 @@ internal static class DesktopServices
         return version;
     }
 
-    public static async Task<AppUpdate?> CheckForUpdateAsync(CancellationToken cancellationToken)
+    public static async Task<AppUpdate?> CheckForUpdateAsync(bool preview, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases?per_page=20");
         request.Headers.UserAgent.ParseAdd("ETS2DiscordPresence");
@@ -54,10 +59,15 @@ internal static class DesktopServices
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
         var current = new Version(Version.Major, Version.Minor, Version.Build);
+        return SelectUpdate(document.RootElement, current, preview);
+    }
+
+    internal static AppUpdate? SelectUpdate(JsonElement releases, Version current, bool preview)
+    {
         var updates = new List<AppUpdate>();
-        foreach (var release in document.RootElement.EnumerateArray())
+        foreach (var release in releases.EnumerateArray())
         {
-            if (release.GetProperty("draft").GetBoolean()) continue;
+            if (release.GetProperty("draft").GetBoolean() || (!preview && release.GetProperty("prerelease").GetBoolean())) continue;
             var tag = release.GetProperty("tag_name").GetString() ?? "";
             if (!System.Version.TryParse(tag.TrimStart('v'), out var parsed) || parsed <= current) continue;
             foreach (var asset in release.GetProperty("assets").EnumerateArray())
@@ -65,7 +75,7 @@ internal static class DesktopServices
                 if (asset.GetProperty("name").GetString() != Asset) continue;
                 var digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
                 updates.Add(new AppUpdate(parsed, $"https://github.com/{Repository}/releases/download/{Uri.EscapeDataString(tag)}/{Asset}",
-                    digest?.StartsWith("sha256:", StringComparison.Ordinal) == true ? digest[7..] : null));
+                    digest?.StartsWith("sha256:", StringComparison.Ordinal) == true && AppUpdater.ValidDigest(digest[7..]) ? digest[7..] : null));
             }
         }
         return updates.OrderByDescending(update => update.Version).FirstOrDefault();

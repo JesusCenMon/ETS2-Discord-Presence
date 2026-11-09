@@ -2,7 +2,7 @@ namespace Ets2DiscordPresence;
 
 internal sealed partial class MainForm
 {
-    private bool MoveTrip(TripEntry trip, IWin32Window owner)
+    private bool MoveTrips(TripEntry[] trips, IWin32Window owner)
     {
         var profiles = new[] { "" }.Concat(preferences.Drivers ?? [])
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -25,7 +25,7 @@ internal sealed partial class MainForm
         StyleTool(window);
         if (window.ShowDialog(owner) != DialogResult.OK) return false;
         var target = new TripJournal(LocalData.JournalPath(profiles[choice.SelectedIndex]));
-        if (journal.Move(trip.Id, target)) return true;
+        if (journal.MoveMany(trips.Select(trip => trip.Id), target)) return true;
         MessageBox.Show(owner, L("No se pudo mover el viaje.", "Could not move the trip."), Text);
         return false;
     }
@@ -77,6 +77,7 @@ internal sealed partial class MainForm
         report.Columns.Add("distance", unit);
         report.Columns.Add("hours", L("Al volante", "Driving"));
         report.Columns.Add("jobs", L("Entregas", "Deliveries"));
+        report.Columns.Add("average", "L/100 km");
         report.Columns.Add("fuel", L("Combustible registrado", "Recorded fuel"));
         void RefreshReport()
         {
@@ -91,9 +92,13 @@ internal sealed partial class MainForm
             foreach (var group in trips.GroupBy(entry => entry.Truck ?? L("Camión sin registrar", "Truck not recorded")))
             {
                 var fuel = group.Sum(entry => entry.FuelLitres);
+                var measured = group.Where(entry => entry.FuelKm >= 1 && entry.FuelLitres > 0 && double.IsFinite(entry.FuelLitres)
+                    && double.IsFinite(entry.FuelKm)).ToArray();
+                var average = measured.Sum(entry => entry.FuelKm) >= 20
+                    ? $"{100 * measured.Sum(entry => entry.FuelLitres) / measured.Sum(entry => entry.FuelKm):N1}" : "—";
                 report.Rows.Add(group.Key, AppOptions.Distance(group.Sum(entry => entry.Km), preferences.Features.Miles),
                     FormatDriving(group.Sum(entry => entry.DrivingSeconds)), group.Count(entry => entry.Result == "delivered"),
-                    fuel > 0 ? $"{fuel:N1} L" : "—");
+                    average, fuel > 0 ? $"{fuel:N1} L" : "—");
             }
         }
         select.ValueChanged += (_, _) => RefreshReport();

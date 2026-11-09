@@ -159,7 +159,9 @@ internal sealed partial class MainForm
             guide.Visible = !preferences.GuideDismissed && !fullScreen;
             update.Text = L($"Actualizar a v{availableUpdate?.Version}…", $"Update to v{availableUpdate?.Version}…");
             update.Visible = availableUpdate is not null;
-            rollback.Text = L("Volver a la versión anterior…", "Restore previous version…");
+            var previous = AppUpdater.ReadVersion(AppUpdater.Previous(Application.ExecutablePath));
+            rollback.Text = previous is null ? L("Volver a la versión anterior…", "Restore previous version…")
+                : L($"Volver a v{previous}…", $"Restore v{previous}…");
             rollback.Visible = File.Exists(AppUpdater.Previous(Application.ExecutablePath));
         };
         actions.Controls.Add(tools);

@@ -46,20 +46,14 @@ internal static class TelemetryReader
         {
             using var map = MemoryMappedFile.OpenExisting(MapName, MemoryMappedFileRights.Read);
             using var view = map.CreateViewAccessor(0, MinimumBytes, MemoryMappedFileAccess.Read);
-            var bytes = new byte[MinimumBytes];
-            // The plugin can update the map while it is read. Retry if its timestamp changes.
-            for (var attempt = 0; attempt < 3; attempt++)
+            var bytes = ReadStableFrame(() => view.ReadUInt64(24), buffer => view.ReadArray(0, buffer, 0, buffer.Length));
+            if (bytes is null)
             {
-                var before = view.ReadUInt64(24);
-                view.ReadArray(0, bytes, 0, bytes.Length);
-                var after = view.ReadUInt64(24);
-                if (before == after || attempt == 2)
-                {
-                    if (bytes[0] != 0) detectedRevision = BitConverter.ToUInt32(bytes.AsSpan(40, 4));
-                    snapshot = Parse(bytes);
-                    break;
-                }
+                error = "ETS2 está actualizando sus datos. Se volverá a intentar.";
+                return false;
             }
+            if (bytes[0] != 0) detectedRevision = BitConverter.ToUInt32(bytes.AsSpan(40, 4));
+            snapshot = Parse(bytes);
             if (snapshot is null) error = "ETS2 todavía no está enviando datos del viaje.";
             return snapshot is not null;
         }
@@ -73,6 +67,19 @@ internal static class TelemetryReader
             error = $"No se pudo leer ETS2: {ex.Message}";
             return false;
         }
+    }
+
+    internal static byte[]? ReadStableFrame(Func<ulong> stamp, Action<byte[]> copy)
+    {
+        var buffer = new byte[MinimumBytes];
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var before = stamp();
+            copy(buffer);
+            var after = stamp();
+            if (before == after && before == BitConverter.ToUInt64(buffer.AsSpan(24, 8))) return buffer;
+        }
+        return null;
     }
 
     // Offsets are from RenCloud's MIT-licensed scs-telemetry-common.hpp, tag V.1.12.1.

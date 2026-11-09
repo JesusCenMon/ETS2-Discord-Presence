@@ -64,6 +64,53 @@ internal sealed partial class MainForm
         return false;
     }
 
+    private string? AskJournalTag(IWin32Window owner)
+    {
+        using var window = ToolWindow(L("Añadir etiqueta", "Add tag"), new Size(430, 240));
+        var content = Grid(1);
+        content.Padding = new Padding(16);
+        var input = new TextBox { Dock = DockStyle.Top, MaxLength = 50, AccessibleName = L("Etiqueta", "Tag"),
+            AutoCompleteMode = AutoCompleteMode.SuggestAppend, AutoCompleteSource = AutoCompleteSource.CustomSource };
+        input.AutoCompleteCustomSource.AddRange(journal.Entries.SelectMany(entry => JournalQuery.Tags(entry.Tags))
+            .Distinct(StringComparer.CurrentCultureIgnoreCase).ToArray());
+        var apply = MakeButton(L("Aplicar", "Apply"));
+        apply.DialogResult = DialogResult.OK;
+        window.AcceptButton = apply;
+        apply.Enabled = false;
+        input.TextChanged += (_, _) => apply.Enabled = !string.IsNullOrWhiteSpace(input.Text) && !input.Text.Contains(',');
+        AddRows(content, TextLabel(L("Etiqueta", "Tag"), 11, true), input, apply);
+        window.Controls.Add(content);
+        StyleTool(window);
+        return window.ShowDialog(owner) == DialogResult.OK ? input.Text.Trim() : null;
+    }
+
+    private void ShowDriverStats(IWin32Window owner)
+    {
+        var entries = journal.Entries;
+        var completed = entries.Count(entry => entry.Result == "delivered");
+        var distance = entries.Sum(entry => entry.Km);
+        var completion = entries.Count > 0 ? $"{(double)completed / entries.Count:P0}" : "—";
+        var topRoute = MostCommon(entries.Select(entry => $"{entry.Origin} → {entry.Destination}"));
+        var topTruck = MostCommon(entries.Select(entry => entry.Truck).OfType<string>());
+        using var window = ToolWindow(L("Estadísticas del conductor", "Driver statistics"), new Size(520, 390));
+        var content = Grid(1);
+        content.Padding = new Padding(16);
+        AddRows(content,
+            TextLabel($"{L("Entregas completadas", "Completed deliveries")} · {completed}/{entries.Count} ({completion})", 13, true),
+            TextLabel($"{L("Distancia", "Distance")} · {AppOptions.Distance(distance, preferences.Features.Miles, "N1")}", 11),
+            TextLabel($"{L("Tiempo al volante", "Driving time")} · {FormatDriving(entries.Sum(entry => entry.DrivingSeconds))}", 11),
+            TextLabel($"{L("Distancia media", "Average distance")} · {(entries.Count > 0 ? AppOptions.Distance(distance / entries.Count, preferences.Features.Miles, "N1") : "—")}", 11),
+            TextLabel($"{L("Ruta más frecuente", "Most frequent route")} · {topRoute}", 11),
+            TextLabel($"{L("Camión más usado", "Most used truck")} · {topTruck}", 11));
+        window.Controls.Add(content);
+        StyleTool(window);
+        window.ShowDialog(owner);
+    }
+
+    private static string MostCommon(IEnumerable<string> values) => values.Where(value => value.Length > 0)
+        .GroupBy(value => value, StringComparer.CurrentCultureIgnoreCase).OrderByDescending(group => group.Count())
+        .FirstOrDefault()?.Key ?? "—";
+
     private void CompareTrips(TripEntry first, TripEntry second, IWin32Window owner)
     {
         using var window = ToolWindow(L("Comparar entregas", "Compare deliveries"), new Size(730, 390));
@@ -81,6 +128,9 @@ internal sealed partial class MainForm
             var route = TextLabel($"{entry.Origin} → {entry.Destination}", 14, true);
             var load = TextLabel(entry.Cargo, 11);
             var tags = TextLabel(entry.Tags, 10);
+            var speed = entry.DrivingSeconds > 0 ? AppOptions.Distance(entry.Km * 3600 / entry.DrivingSeconds,
+                preferences.Features.Miles, "N1") + "/h" : "—";
+            var fuel = entry.FuelLitres > 0 ? $"{entry.FuelLitres:N1} L" : "—";
             void Wrap()
             {
                 foreach (var label in new[] { route, load, tags }) SetWrap(label, grid.ClientSize.Width / 2 - 54);
@@ -88,12 +138,22 @@ internal sealed partial class MainForm
             grid.SizeChanged += (_, _) => Wrap();
             AddRows(card, TextLabel($"{L("Viaje", "Trip")} {tripNumber + 1}", 9, true), route, load,
                 TextLabel(Result(entry), 10), TextLabel(entry.Finished?.ToLocalTime().ToString("g") ?? "", 10),
-                TextLabel(AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1"), 16, true), TextLabel(FormatDriving(entry.DrivingSeconds), 12, true), tags);
+                TextLabel(AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1"), 16, true), TextLabel(FormatDriving(entry.DrivingSeconds), 12, true),
+                TextLabel($"{L("Velocidad media", "Average speed")} · {speed}", 10),
+                TextLabel($"{L("Combustible", "Fuel")} · {fuel}", 10),
+                TextLabel($"{L("Paradas detectadas", "Stops detected")} · {entry.Stops?.ToString() ?? "—"}", 10), tags);
             grid.Controls.Add(card, tripNumber++, 0);
         }
         var scrollPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, TabStop = false };
+        var change = first.Km > 0 ? $"{(second.Km / first.Km - 1) * 100:+0.0;-0.0;0} %" : "—";
+        var timeChange = first.DrivingSeconds > 0 ? $"{(second.DrivingSeconds / first.DrivingSeconds - 1) * 100:+0.0;-0.0;0} %" : "—";
+        var difference = TextLabel(L($"Segundo viaje respecto al primero · Distancia {change} · Tiempo {timeChange}",
+            $"Second trip compared with first · Distance {change} · Time {timeChange}"), 10, true);
+        difference.Dock = DockStyle.Bottom;
+        difference.Padding = new Padding(16, 0, 16, 10);
         scrollPanel.Controls.Add(grid);
         window.Controls.Add(scrollPanel);
+        window.Controls.Add(difference);
         StyleTool(window);
         window.ShowDialog(owner);
     }

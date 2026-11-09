@@ -12,7 +12,7 @@ internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bo
     string? CityCatalog = null, string Profile = "custom", string[]? PresenceOrder = null,
     string[]? PanelOrder = null, string[]? HiddenPanels = null,
     string DriverProfile = "", string[]? Drivers = null, int TextPercent = 100, int RetentionDays = 0,
-    int FuelThreshold = 0, int PrivacyShortcut = 0, bool ActivityImage = true, bool ActivityTimer = true, bool ShowArtwork = false, AppOptions? Options = null)
+    int FuelThreshold = 0, int PrivacyShortcut = 0, bool ActivityImage = true, bool ActivityTimer = true, bool ShowArtwork = false, AppOptions? Options = null, bool PreviewUpdates = false)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public AppOptions Features => Options ?? new();

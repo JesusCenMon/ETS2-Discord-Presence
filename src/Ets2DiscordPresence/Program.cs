@@ -35,6 +35,7 @@ internal static class Program
                 catch (InvalidOperationException) { }
             }
         }, null, Timeout.Infinite, executeOnlyOnce: false);
+        window.Shown += (_, _) => window.BeginInvoke(() => AppUpdater.ConfirmStartup(args));
         try { Application.Run(window); }
         finally { activation.Unregister(null); }
     }

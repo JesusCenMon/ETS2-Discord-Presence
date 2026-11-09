@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Compression;
 
 namespace Ets2DiscordPresence;
 
@@ -9,28 +10,91 @@ internal static class TelemetryReplay
     internal const int MaximumFrames = 35_000;
     internal const long MaximumBytes = 30_000_000;
 
-    public static List<RecordedFrame> Read(string path)
+    internal sealed record RecordingMetadata(int SchemaVersion, string AppVersion, DateTimeOffset Created);
+    internal sealed record RecordingRead(List<RecordedFrame> Frames, bool RecoveredTail, RecordingMetadata? Metadata);
+
+    public static List<RecordedFrame> Read(string path) => ReadDetailed(path).Frames;
+
+    public static RecordingRead ReadDetailed(string path)
     {
         using var file = File.OpenRead(path);
+        return ReadFile(file, path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static RecordingRead ReadFile(Stream file, bool compressed)
+    {
         if (file.Length is 0 or > MaximumBytes) throw new InvalidDataException("Recording exceeds the allowed size.");
+        if (!compressed) return Parse(file);
+        using var gzip = new GZipStream(file, CompressionMode.Decompress, leaveOpen: true);
+        using var content = new MemoryStream();
+        var buffer = new byte[8192];
+        int count;
+        while ((count = gzip.Read(buffer)) != 0)
+        {
+            if (content.Length + count > MaximumBytes) throw new InvalidDataException("Recording exceeds the allowed size.");
+            content.Write(buffer, 0, count);
+        }
+        if (content.Length == 0) throw new InvalidDataException("The recording is empty.");
+        return Parse(content);
+    }
+
+    private static RecordingRead Parse(Stream file)
+    {
         file.Seek(-1, SeekOrigin.End);
         var incompleteTail = file.ReadByte() != '\n';
         file.Seek(0, SeekOrigin.Begin);
         using var input = new StreamReader(file);
         var frames = new List<RecordedFrame>();
+        RecordingMetadata? metadata = null;
+        var recoveredTail = false;
         while (input.ReadLine() is { } line)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             RecordedFrame frame;
-            try { frame = JsonSerializer.Deserialize<RecordedFrame>(line) ?? throw new InvalidDataException("Invalid frame."); }
-            catch (JsonException) when (incompleteTail && input.EndOfStream && frames.Count > 0) { break; }
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var item = document.RootElement;
+                if (item.TryGetProperty("SchemaVersion", out _))
+                {
+                    if (metadata is not null || frames.Count > 0
+                        || item.Deserialize<RecordingMetadata>() is not { SchemaVersion: 1 } header
+                        || !Version.TryParse(header.AppVersion, out _) || header.Created == default)
+                        throw new InvalidDataException("Unsupported recording schema.");
+                    metadata = header;
+                    continue;
+                }
+                if (!item.TryGetProperty("ElapsedMs", out _)) throw new InvalidDataException("Invalid frame.");
+                frame = item.Deserialize<RecordedFrame>() ?? throw new InvalidDataException("Invalid frame.");
+            }
+            catch (JsonException) when (incompleteTail && input.EndOfStream && frames.Count > 0)
+            {
+                recoveredTail = true;
+                break;
+            }
             if (frame.ElapsedMs < 0 || frame.ElapsedMs > 7 * 24 * 60 * 60 * 1000L
                 || (frames.Count > 0 && frames[^1].ElapsedMs > frame.ElapsedMs) || frames.Count >= MaximumFrames)
                 throw new InvalidDataException("Invalid recording timeline.");
             frames.Add(frame);
         }
         if (frames.Count == 0) throw new InvalidDataException("The recording is empty.");
-        return frames;
+        return new RecordingRead(frames, recoveredTail, metadata);
+    }
+
+    public static void WriteHeader(TextWriter writer) =>
+        writer.WriteLine(JsonSerializer.Serialize(new RecordingMetadata(1, DesktopServices.Version.ToString(3), DateTimeOffset.UtcNow)));
+
+    internal static TelemetrySnapshot? Interpolate(IReadOnlyList<RecordedFrame> frames, int index, long elapsed)
+    {
+        if (index < 0) return null;
+        var current = frames[index];
+        if (current.Trip is not { Paused: false } earlier || index + 1 >= frames.Count
+            || frames[index + 1] is not { Trip: { Paused: false } to } next
+            || next.ElapsedMs - current.ElapsedMs is <= 0 or > 6000 || earlier.Signals?.Ferry != to.Signals?.Ferry
+            || Math.Abs(to.X - earlier.X) + Math.Abs(to.Z - earlier.Z) > 4000)
+            return current.Trip;
+        var progress = Math.Clamp((double)(elapsed - current.ElapsedMs) / (next.ElapsedMs - current.ElapsedMs), 0, 1);
+        return earlier with { X = earlier.X + (to.X - earlier.X) * progress, Z = earlier.Z + (to.Z - earlier.Z) * progress };
     }
 
     public static int IndexAt(IReadOnlyList<RecordedFrame> frames, long elapsed)
@@ -52,20 +116,23 @@ internal static class TelemetryReplay
         foreach (var frame in frames)
         {
             if (!string.IsNullOrWhiteSpace(frame.Marker)) yield return (frame.ElapsedMs, frame.Marker);
-            if (frame.Trip is { Signals: { } signals } trip)
-            {
-                var old = previous?.Signals;
-                if (trip.OnJob && signals.Loaded && (previous?.OnJob != true || old?.Loaded != true))
-                    yield return (frame.ElapsedMs, "pickup");
-                if (old is not null && signals.Ferry != old.Ferry)
-                    yield return (frame.ElapsedMs, "ferry");
-                if (old is not null && signals.FinishedAt != 0
-                    && (signals.FinishedAt != old.FinishedAt || signals.Delivered != old.Delivered)
-                    && signals.Delivered != old.Delivered)
-                    yield return (frame.ElapsedMs, "delivery");
-            }
+            foreach (var kind in DetectEvents(frame.Trip, previous)) yield return (frame.ElapsedMs, kind);
             previous = frame.Trip;
         }
+    }
+
+    internal static IEnumerable<string> DetectEvents(TelemetrySnapshot? trip, TelemetrySnapshot? previous)
+    {
+        if (trip?.Signals is not { } signals) yield break;
+        var old = previous?.Signals;
+        if (trip.OnJob && signals.Loaded && (previous?.OnJob != true || old?.Loaded != true)) yield return "pickup";
+        if (old is null) yield break;
+        if (signals.Refueling && !old.Refueling) yield return "fuel";
+        if (signals.RestMinutes > old.RestMinutes + 120 && Math.Abs(signals.Speed) < .25
+            && previous is not null && (long)trip.GameMinutes - previous.GameMinutes >= 120 && signals.Ferry == old.Ferry)
+            yield return "rest";
+        if (signals.Ferry != old.Ferry) yield return "ferry";
+        if (signals.FinishedAt != 0 && signals.Delivered != old.Delivered) yield return "delivery";
     }
 
     public static void Save(string path, IEnumerable<RecordedFrame> frames)
@@ -73,8 +140,13 @@ internal static class TelemetryReplay
         var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            using (var writer = new StreamWriter(new FileStream(temporary, FileMode.CreateNew)))
+            using (var output = new FileStream(temporary, FileMode.CreateNew))
+            using (var writer = new StreamWriter(path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
+                ? new GZipStream(output, CompressionLevel.Optimal) : output))
+            {
+                WriteHeader(writer);
                 foreach (var frame in frames) writer.WriteLine(JsonSerializer.Serialize(frame));
+            }
             File.Move(temporary, path, overwrite: true);
         }
         finally { File.Delete(temporary); }

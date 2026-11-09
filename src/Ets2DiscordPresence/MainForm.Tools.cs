@@ -31,12 +31,19 @@ internal sealed partial class MainForm
         public Font? Applied { get; set; }
     }
 
-    private Form ToolWindow(string title, Size size) => new()
+    private Form ToolWindow(string title, Size size, Form? target = null)
     {
-        Text = title, ClientSize = size, MinimumSize = new Size(Math.Min(size.Width, 520), 360),
-        StartPosition = FormStartPosition.CenterParent, BackColor = Background, ForeColor = Foreground,
-        AutoScaleMode = AutoScaleMode.Dpi, Icon = appIcon
-    };
+        var window = target ?? new Form();
+        window.Text = title;
+        window.ClientSize = size;
+        window.MinimumSize = new Size(Math.Min(size.Width, 520), 360);
+        window.StartPosition = FormStartPosition.CenterParent;
+        window.BackColor = Background;
+        window.ForeColor = Foreground;
+        window.AutoScaleMode = AutoScaleMode.Dpi;
+        window.Icon = appIcon;
+        return window;
+    }
 
     private static FlowLayoutPanel ToolBar() => new()
     {
@@ -292,7 +299,7 @@ internal sealed partial class MainForm
         window.Show(this);
     }
 
-    private void RenderTools(TelemetrySnapshot? trip, TelemetrySnapshot? live, bool discordConnected)
+    private void RenderTools(TelemetrySnapshot? trip, TelemetrySnapshot? live, bool discordConnected, bool sharing)
     {
         liveDelivery = live?.OnJob == true;
         var truck = trip?.Truck;
@@ -326,13 +333,11 @@ internal sealed partial class MainForm
         if (quickText is not null)
             quickText.Text = $"{place}\n{remaining} · Discord {(discordConnected ? L("conectado", "connected") : L("sin conexión", "offline"))}"
                 + (privateDestination ? $"\n{L("Destino oculto en Discord", "Destination hidden on Discord")}" : "");
-        var waiting = live is null || live.Paused || !live.OnJob;
-        var routeForObs = waiting ? (string.IsNullOrWhiteSpace(preferences.Features.ObsWaiting) ? place : preferences.Features.ObsWaiting)
-            : $"{live!.SourceCity}  →  {live.DestinationCity}";
-        if (live?.Paused == true && string.IsNullOrWhiteSpace(preferences.Features.ObsWaiting)) routeForObs = L("En pausa", "Paused");
-        var distanceForObs = waiting ? "" : remaining;
-        if (captureRoute is not null) captureRoute.Text = preferences.Features.ObsRoute ? routeForObs : "";
-        if (captureDistance is not null) captureDistance.Text = preferences.Features.ObsDistance ? distanceForObs : "";
-        overlay?.Update(routeForObs, distanceForObs, preferences.Features);
+        var visibility = PresencePrivacy.Apply(preferences, live?.OnJob, privateDestination);
+        var idle = live?.Paused == true ? L("En pausa", "Paused") : L("Sin ruta activa", "No active route");
+        var (obsRoute, obsDistance) = PresencePrivacy.Overlay(visibility, live, sharing, idle, remaining);
+        if (captureRoute is not null) captureRoute.Text = preferences.Features.ObsRoute ? obsRoute : "";
+        if (captureDistance is not null) captureDistance.Text = preferences.Features.ObsDistance ? obsDistance : "";
+        overlay?.Update(obsRoute, obsDistance, preferences.Features);
     }
 }

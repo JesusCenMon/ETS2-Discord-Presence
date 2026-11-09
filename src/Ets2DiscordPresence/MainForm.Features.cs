@@ -199,8 +199,11 @@ internal sealed partial class MainForm
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
+    private string? activeCatalog;
+
     private void LoadCatalog()
     {
+        activeCatalog = null;
         if (preferences.CityCatalog is { Length: > 0 } name && Path.GetFileName(name) == name)
         {
             try
@@ -208,6 +211,7 @@ internal sealed partial class MainForm
                 using var data = File.OpenRead(Path.Combine(TripJournal.DataFolder, "catalogs", name));
                 if (data.Length > 5_000_000) throw new InvalidDataException();
                 cities = new CityLookup(data);
+                activeCatalog = name;
                 return;
             }
             catch (Exception ex) when (IsCatalogError(ex))

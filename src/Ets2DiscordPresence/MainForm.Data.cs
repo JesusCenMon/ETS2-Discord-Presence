@@ -7,12 +7,17 @@ internal sealed partial class MainForm
     private void ChangeStorage(IWin32Window owner)
     {
         var enable = !LocalData.IsPortable;
-        if (!Confirm(owner, enable
-            ? L("La próxima vez, la app usará la carpeta ETS2PresenceData junto al ejecutable. Puedes llevar tus datos con una copia de seguridad. ¿Activar?",
-                "Next launch will use the ETS2PresenceData folder beside the executable. You can transfer your data with a backup. Enable?")
-            : L("La próxima vez, la app volverá a usar tu perfil de Windows. ¿Continuar?",
-                "Next launch will use your Windows profile again. Continue?"))) return;
-        if (DataAction(owner, () => LocalData.SetPortable(enable)))
+        var choice = MessageBox.Show(owner, L("¿Copiar ahora ajustes, diarios y catálogos a la carpeta que se usará al reiniciar? Sí copia los datos y reemplaza los archivos del mismo nombre en el destino. No cambia de carpeta sin copiarlos.",
+            "Copy settings, journals and catalogs to the folder used after restarting? Yes copies the data and replaces files with matching names at the destination. No switches folders without copying."),
+            Text, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        if (choice == DialogResult.Cancel) return;
+        journal.Flush();
+        if (journal.Error is not null)
+        {
+            MessageBox.Show(owner, L("No se pudo guardar el diario.", "Could not save the journal."), Text);
+            return;
+        }
+        if (DataAction(owner, () => LocalData.SetPortable(enable, choice == DialogResult.Yes)))
             MessageBox.Show(owner, L("Cierra y vuelve a abrir la app para cambiar de carpeta.", "Close and reopen the app to change folders."), Text);
     }
 
@@ -30,15 +35,23 @@ internal sealed partial class MainForm
             MessageBox.Show(owner, L("No se pudo guardar el diario antes de crear la copia.", "Could not save the journal before creating the backup."), Text);
             return;
         }
-        if (DataAction(owner, () => LocalData.Backup(picker.FileName)))
-            MessageBox.Show(owner, L("Copia guardada. Incluye ajustes, diarios y catálogos.", "Backup saved. It includes settings, journals and catalogs."), Text);
+        long bytes = 0;
+        if (!DataAction(owner, () => bytes = LocalData.RecordingBytes(recordingPath))) return;
+        var include = bytes > 0 ? MessageBox.Show(owner,
+            L($"¿Incluir las repeticiones guardadas? Tamaño estimado adicional: {bytes * 1.34 / 1_000_000:N1} MB.",
+                $"Include saved replays? Estimated additional size: {bytes * 1.34 / 1_000_000:N1} MB."),
+            Text, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question) : DialogResult.No;
+        if (include == DialogResult.Cancel) return;
+        if (DataAction(owner, () => LocalData.Backup(picker.FileName, includeRecordings: include == DialogResult.Yes, active: recordingPath)))
+            MessageBox.Show(owner, L("Copia guardada.", "Backup saved."), Text);
     }
 
     private void RestoreBackup(Form owner)
     {
-        if (liveDelivery)
+        if (liveDelivery || recording is not null)
         {
-            MessageBox.Show(owner, L("Termina la entrega antes de restaurar una copia.", "Finish the delivery before restoring a backup."), Text);
+            MessageBox.Show(owner, L("Termina la entrega y detén la grabación antes de restaurar una copia.",
+                "Finish the delivery and stop recording before restoring a backup."), Text);
             return;
         }
         using var picker = new OpenFileDialog

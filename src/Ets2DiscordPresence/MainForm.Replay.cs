@@ -20,8 +20,9 @@ internal sealed partial class MainForm
         var pause = MakeButton(L("Pausar grabación", "Pause recording"));
         var marker = MakeButton(L("Marcar · Ctrl + Alt + F12", "Mark · Ctrl + Alt + F12"));
         var compare = MakeButton(L("Comparar dos", "Compare two"));
+        var compress = MakeButton(L("Comprimir", "Compress"));
         var trash = MakeButton(L("Papelera", "Trash"));
-        bar.Controls.AddRange([record, pause, marker, play, compare, open, delete, trash]);
+        bar.Controls.AddRange([record, pause, marker, play, compare, open, delete, compress, trash]);
         var heading = Grid(1);
         heading.Padding = new Padding(12, 10, 12, 5);
         var info = TextLabel("", 10);
@@ -52,6 +53,8 @@ internal sealed partial class MainForm
         {
             play.Enabled = delete.Enabled = list.SelectedItems.Count == 1;
             compare.Enabled = list.SelectedItems.Count == 2;
+            compress.Enabled = list.SelectedItems.Count == 1 && list.SelectedItem is RecordingItem selected
+                && selected.Path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase);
             pause.Enabled = recording is not null;
             marker.Enabled = recording is not null && !recordingPaused;
             pause.Text = recordingPaused ? L("Reanudar grabación", "Resume recording") : L("Pausar grabación", "Pause recording");
@@ -74,8 +77,22 @@ internal sealed partial class MainForm
         list.DoubleClick += (_, _) => PlaySelected();
         open.Click += (_, _) =>
         {
-            using var picker = new OpenFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl" };
+            using var picker = new OpenFileDialog { Filter = "JSONL (*.jsonl;*.jsonl.gz)|*.jsonl;*.jsonl.gz" };
             if (picker.ShowDialog(window) == DialogResult.OK) ShowPlayback(picker.FileName, window);
+        };
+        compress.Click += (_, _) =>
+        {
+            if (list.SelectedItem is not RecordingItem item || !compress.Enabled || item.Path == recordingPath) return;
+            if (DataAction(window, () =>
+            {
+                var compressed = item.Path + ".gz";
+                if (File.Exists(compressed)) throw new IOException("Compressed replay already exists.");
+                var source = TelemetryReplay.ReadDetailed(item.Path);
+                if (source.RecoveredTail) throw new InvalidDataException("Repair the partial replay before compressing it.");
+                TelemetryReplay.Save(compressed, source.Frames);
+                _ = TelemetryReplay.Read(compressed);
+                File.Delete(item.Path);
+            })) Populate();
         };
         delete.Click += (_, _) =>
         {
@@ -96,10 +113,11 @@ internal sealed partial class MainForm
 
     private void ShowPlayback(string path, IWin32Window owner)
     {
-        List<RecordedFrame>? frames = null;
-        if (!DataAction(owner, () => frames = TelemetryReplay.Read(path)) || frames is null) return;
-        var data = frames;
-        using var window = ToolWindow(L("Reproducción del viaje", "Trip replay"), new Size(885, 665));
+        TelemetryReplay.RecordingRead? read = null;
+        if (!DataAction(owner, () => read = TelemetryReplay.ReadDetailed(path)) || read is null) return;
+        var data = read.Frames;
+        using var dialog = new ReplayDialog();
+        var window = ToolWindow(L("Reproducción del viaje", "Trip replay"), new Size(885, 665), dialog);
         using var ticker = new System.Windows.Forms.Timer { Interval = 100 };
         var map = new TripMap { Dock = DockStyle.Fill };
         var graph = new SpeedChart(data, Surface, Foreground, Accent)
@@ -114,18 +132,17 @@ internal sealed partial class MainForm
         var speed = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, AccessibleName = L("Velocidad de reproducción", "Playback speed") };
         speed.Items.AddRange(["0.5×", "1×", "2×", "4×", "8×"]);
         speed.SelectedIndex = 1;
-        var moments = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 225, AccessibleName = L("Saltar a un momento del viaje", "Jump to a milestone") };
-        moments.Items.Add(L("Saltar a un momento…", "Jump to a milestone…"));
+        var moments = new ListBox { Dock = DockStyle.Right, Width = 180, AccessibleName = L("Eventos del viaje", "Trip events") };
         void ListMoments()
         {
-            while (moments.Items.Count > 1) moments.Items.RemoveAt(1);
+            moments.Items.Clear();
             foreach (var (elapsed, kind) in TelemetryReplay.Milestones(data))
                 moments.Items.Add(new ReplayMoment(elapsed, kind switch
                 {
-                    "pickup" => L("Recogida", "Pickup"), "ferry" => "Ferry", "delivery" => L("Entrega", "Delivery"), _ => kind
+                    "pickup" => L("Recogida", "Pickup"), "ferry" => "Ferry", "delivery" => L("Entrega", "Delivery"),
+                    "fuel" => L("Repostaje", "Refueling"), "rest" => L("Descanso", "Rest"), _ => kind
                 }));
-            moments.SelectedIndex = 0;
-            moments.Enabled = moments.Items.Count > 1;
+            moments.Enabled = moments.Items.Count > 0;
         }
         ListMoments();
         var trim = MakeButton(L("Recortar…", "Trim…"));
@@ -136,13 +153,27 @@ internal sealed partial class MainForm
         {
             if (RenameMarker(path, data, window)) ListMoments();
         };
-        bar.Controls.AddRange([play, speed, moments, trim, rename]);
+        bar.Controls.AddRange([play, speed, trim, rename]);
+        if (read.RecoveredTail)
+        {
+            var repair = MakeButton(L("Guardar copia reparada…", "Save repaired copy…"));
+            repair.Click += (_, _) =>
+            {
+                using var picker = new SaveFileDialog { Filter = "JSONL (*.jsonl)|*.jsonl", FileName = "ETS2-reparada.jsonl" };
+                if (picker.ShowDialog(window) == DialogResult.OK && !string.Equals(Path.GetFullPath(path), Path.GetFullPath(picker.FileName), StringComparison.OrdinalIgnoreCase))
+                    DataAction(window, () => TelemetryReplay.Save(picker.FileName, data));
+            };
+            bar.Controls.Add(repair);
+        }
         var mapTools = MapControls(map);
         var status = TextLabel("", 11, true);
         var footer = Grid(1);
         footer.Padding = new Padding(10, 5, 10, 6);
+        if (read.RecoveredTail)
+            AddRows(footer, TextLabel(L($"Se recuperaron {data.Count} de {data.Count + 1} muestras.", $"Recovered {data.Count} of {data.Count + 1} samples."), 10, true));
         AddRows(footer, status, TextLabel(L("Velocidad · km/h", "Speed · km/h"), 9), graph, slider, bar);
         window.Controls.Add(map);
+        window.Controls.Add(moments);
         window.Controls.Add(mapTools);
         window.Controls.Add(footer);
         footer.Dock = DockStyle.Bottom;
@@ -163,6 +194,7 @@ internal sealed partial class MainForm
                 if (index >= 0) map.ShowReplayTrail(data, index);
                 shownIndex = index;
             }
+            map.UpdateReplayTruck(TelemetryReplay.Interpolate(data, index, slider.Value));
             graph.SetElapsed(slider.Value);
             var velocity = trip?.Signals is { Speed: var value } && float.IsFinite(value)
                 ? $" · {Math.Abs(value * 3.6):N0} km/h" : "";
@@ -185,10 +217,28 @@ internal sealed partial class MainForm
         };
         slider.Scroll += (_, _) => Seek(slider.Value);
         graph.MouseDown += (_, e) => Seek(graph.TimeAt(e.X));
-        moments.SelectionChangeCommitted += (_, _) =>
+        moments.SelectedIndexChanged += (_, _) =>
         {
             if (moments.SelectedItem is ReplayMoment moment) Seek(moment.Elapsed);
-            moments.SelectedIndex = 0;
+        };
+        dialog.HandleShortcut = key =>
+        {
+            if (key == Keys.Space) play.PerformClick();
+            else if (key == Keys.Home) Seek(0);
+            else if (key == Keys.End) Seek(slider.Maximum);
+            else if (key is Keys.Left or Keys.Right or (Keys.Control | Keys.Left) or (Keys.Control | Keys.Right))
+            {
+                var forward = (key & Keys.KeyCode) == Keys.Right;
+                if ((key & Keys.Control) != 0)
+                {
+                    var events = moments.Items.OfType<ReplayMoment>().Select(moment => moment.Elapsed);
+                    Seek(forward ? events.FirstOrDefault(at => at > elapsedMs, slider.Maximum)
+                        : events.LastOrDefault(at => at < elapsedMs, 0));
+                }
+                else Seek((long)elapsedMs + (forward ? 5000 : -5000));
+            }
+            else return false;
+            return true;
         };
         ticker.Tick += (_, _) =>
         {
@@ -222,6 +272,14 @@ internal sealed partial class MainForm
     {
         var time = TimeSpan.FromMilliseconds(ms);
         return $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}";
+    }
+
+    private sealed class ReplayDialog : Form
+    {
+        internal Func<Keys, bool>? HandleShortcut;
+
+        protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
+            HandleShortcut?.Invoke(keyData) == true || base.ProcessCmdKey(ref message, keyData);
     }
 
     private sealed record ReplayMoment(long Elapsed, string Title)

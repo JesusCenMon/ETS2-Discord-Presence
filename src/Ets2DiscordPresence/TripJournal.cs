@@ -6,7 +6,7 @@ namespace Ets2DiscordPresence;
 
 internal sealed record TripEntry(Guid Id, string Key, string Origin, string Destination, string Cargo,
     DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds, string Notes = "", string Tags = "", bool Favorite = false, string? Truck = null, double FuelLitres = 0, string? Recording = null,
-    DateTimeOffset? DeletedAt = null);
+    DateTimeOffset? DeletedAt = null, bool? OnTime = null, double FuelKm = 0, int? Stops = null);
 internal sealed record JournalData(List<TripEntry> Entries, List<TripEntry> Pending, List<TripEntry>? Trash = null);
 
 internal sealed class TripJournal
@@ -21,6 +21,8 @@ internal sealed class TripJournal
     private long lastFerry;
     private long lastRest;
     private bool dirty;
+    private long? stoppedSince;
+    private bool stopCounted;
 
     public IReadOnlyList<TripEntry> Entries => data.Entries;
     public IReadOnlyList<TripEntry> Trash => data.Trash!;
@@ -52,6 +54,8 @@ internal sealed class TripJournal
         if (trip?.Signals is not { } signals)
         {
             previous = null;
+            stoppedSince = null;
+            stopCounted = false;
             lastFerry = lastRest = 0;
             return null;
         }
@@ -68,7 +72,11 @@ internal sealed class TripJournal
             if (delivered != cancelled)
             {
                 var km = delivered && signals.DeliveredKm is > 0 and < 100_000 ? signals.DeliveredKm : ended.Km;
-                summary = ended with { Finished = utc, Result = delivered ? "delivered" : "cancelled", Km = km };
+                summary = ended with
+                {
+                    Finished = utc, Result = delivered ? "delivered" : "cancelled", Km = km,
+                    OnTime = delivered && old.Deadline > 0 ? signals.FinishedAt <= old.Deadline : null
+                };
                 data.Entries.Add(summary);
                 data.Pending.RemoveAll(item => item.Id == ended.Id);
                 active = null;
@@ -90,10 +98,12 @@ internal sealed class TripJournal
             var sameTrip = active?.Key == key;
             if (!sameTrip)
             {
+                stoppedSince = null;
+                stopCounted = false;
                 active = data.Pending.LastOrDefault(item => item.Key == key);
                 Recovered = active is not null;
                 active ??= new TripEntry(Guid.NewGuid(), key, trip.SourceCity, trip.DestinationCity, trip.Cargo,
-                    utc, null, "", 0, 0, Truck: TruckLabel(trip.Truck));
+                    utc, null, "", 0, 0, Truck: TruckLabel(trip.Truck), Stops: 0);
                 SaveActive();
                 Flush(now);
             }
@@ -101,13 +111,29 @@ internal sealed class TripJournal
             {
                 var delta = signals.Odometer - old.Odometer;
                 var elapsed = now - previousAt;
+                if (elapsed is > 0 and <= 6000 && Math.Abs(signals.Speed) <= .25f)
+                {
+                    stoppedSince ??= now;
+                    if (!stopCounted && now - stoppedSince >= 10_000)
+                    {
+                        stopCounted = true;
+                        active = active! with { Stops = (active.Stops ?? 0) + 1 };
+                        SaveActive();
+                    }
+                }
+                else
+                {
+                    stoppedSince = null;
+                    stopCounted = false;
+                }
                 if (elapsed is > 0 and <= 6000 && Math.Abs(signals.Speed) > .25f && delta is >= 0 and <= 10)
                 {
                     var litres = previous.Truck?.Litres - trip.Truck?.Litres;
                     active = active! with
                     {
                         Km = active.Km + delta, DrivingSeconds = active.DrivingSeconds + elapsed / 1000d,
-                        FuelLitres = active.FuelLitres + (litres is > 0 and < 25 ? litres.Value : 0)
+                        FuelLitres = active.FuelLitres + (litres is > 0 and < 25 ? litres.Value : 0),
+                        FuelKm = active.FuelKm + (litres is >= 0 and < 25 ? delta : 0)
                     };
                     SaveActive();
                 }
@@ -119,6 +145,11 @@ internal sealed class TripJournal
             Recovered = false;
         }
 
+        if (trip.Paused || !trip.OnJob)
+        {
+            stoppedSince = null;
+            stopCounted = false;
+        }
         previous = trip;
         previousAt = now;
         if (now - lastSaved >= 15_000) Flush(now);
@@ -187,32 +218,56 @@ internal sealed class TripJournal
         Flush();
     }
 
-    public bool Move(Guid id, TripJournal target)
+    public bool EditMany(IEnumerable<Guid> ids, string? tag, bool favorite)
+    {
+        var selected = ids.ToHashSet();
+        var previous = data.Entries.ToArray();
+        for (var index = 0; index < data.Entries.Count; index++)
+        {
+            var entry = data.Entries[index];
+            if (!selected.Contains(entry.Id)) continue;
+            var tags = tag is null ? entry.Tags : string.Join(", ", JournalQuery.Tags(entry.Tags).Append(tag)
+                .Distinct(StringComparer.CurrentCultureIgnoreCase));
+            data.Entries[index] = entry with { Tags = tags, Favorite = favorite || entry.Favorite };
+        }
+        dirty = true;
+        Flush();
+        if (Error is null) return true;
+        data.Entries.Clear();
+        data.Entries.AddRange(previous);
+        return false;
+    }
+
+    public bool Move(Guid id, TripJournal target) => MoveMany([id], target);
+
+    public bool MoveMany(IEnumerable<Guid> ids, TripJournal target)
     {
         if (target.Error is not null || Error is not null || string.Equals(path, target.path, StringComparison.OrdinalIgnoreCase)) return false;
-        var entry = data.Entries.Find(item => item.Id == id);
-        if (entry is null) return false;
-        var index = data.Entries.IndexOf(entry);
-        var added = !target.data.Entries.Any(item => item.Id == id);
-        if (added)
+        var selected = ids.ToHashSet();
+        var before = data.Entries.ToArray();
+        var entries = before.Where(entry => selected.Contains(entry.Id)).ToArray();
+        if (entries.Length == 0) return false;
+        var added = entries.Where(entry => target.data.Entries.All(other => other.Id != entry.Id)).ToArray();
+        if (added.Length > 0)
         {
-            target.data.Entries.Add(entry);
+            target.data.Entries.AddRange(added);
             target.dirty = true;
             target.Flush();
             if (target.Error is not null)
             {
-                target.data.Entries.Remove(entry);
+                target.data.Entries.RemoveAll(added.Contains);
                 return false;
             }
         }
-        data.Entries.RemoveAt(index);
+        data.Entries.RemoveAll(entry => selected.Contains(entry.Id));
         dirty = true;
         Flush();
         if (Error is null) return true;
-        data.Entries.Insert(index, entry);
-        if (added)
+        data.Entries.Clear();
+        data.Entries.AddRange(before);
+        if (added.Length > 0)
         {
-            target.data.Entries.Remove(entry);
+            target.data.Entries.RemoveAll(added.Contains);
             target.dirty = true;
             target.Flush();
         }

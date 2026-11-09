@@ -9,8 +9,15 @@ internal sealed record MapCity(string Name, double X, double Z, string? Id, stri
 
 internal sealed class CityLookup
 {
+    private const int CellSize = 8000;
     private readonly List<MapCity> cities;
+    private readonly Dictionary<(int X, int Z), List<MapCity>> cells = [];
     public IReadOnlyList<MapCity> Cities => cities;
+    public int Rejected { get; }
+    public int DuplicateIds { get; }
+    public int DuplicatePositions { get; }
+    public int Identified => cities.Count(city => !string.IsNullOrWhiteSpace(city.Id));
+    public int RecognizedCountries => cities.Select(city => city.Country).OfType<string>().Distinct().Count();
     public MapCity? FindDestination(string name, string? id) =>
         (string.IsNullOrWhiteSpace(id) ? null : cities.Find(city => string.Equals(city.Id, id, StringComparison.OrdinalIgnoreCase)))
         ?? cities.Find(city => CultureInfo.CurrentCulture.CompareInfo.Compare(city.Name, name,
@@ -20,16 +27,45 @@ internal sealed class CityLookup
     {
         cities = new();
         using var document = JsonDocument.Parse(source);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var positions = new Dictionary<string, List<MapCity>>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in document.RootElement.GetProperty("citiesList").EnumerateArray())
         {
-            var name = item.GetProperty("realName").GetString();
-            if (!string.IsNullOrWhiteSpace(name) && TryCoordinate(item.GetProperty("x"), out var x)
-                && TryCoordinate(item.GetProperty("z"), out var z))
-                cities.Add(new MapCity(name.Trim(), x, z, item.TryGetProperty("gameName", out var id) ? id.GetString() : null,
-                    item.TryGetProperty("country", out var country) && country.ValueKind == JsonValueKind.String
-                        ? Countries.Normalize(country.GetString()) : null));
+            var name = StringProperty(item, "realName");
+            if (string.IsNullOrWhiteSpace(name) || !item.TryGetProperty("x", out var xValue)
+                || !TryCoordinate(xValue, out var x) || !item.TryGetProperty("z", out var zValue) || !TryCoordinate(zValue, out var z))
+            {
+                Rejected++;
+                continue;
+            }
+            var id = StringProperty(item, "gameName")?.Trim();
+            var city = new MapCity(name.Trim(), x, z, id, Countries.Normalize(StringProperty(item, "country")));
+            if (!string.IsNullOrWhiteSpace(id) && !ids.Add(id)) DuplicateIds++;
+            if (!positions.TryGetValue(city.Name, out var matching)) positions[city.Name] = matching = [];
+            if (matching.Any(other => Math.Abs(other.X - x) <= 20 && Math.Abs(other.Z - z) <= 20)) DuplicatePositions++;
+            matching.Add(city);
+            cities.Add(city);
+            var cell = (Cell(x), Cell(z));
+            if (!cells.TryGetValue(cell, out var bucket)) cells[cell] = bucket = [];
+            bucket.Add(city);
+            if (cities.Count > 20_000) throw new InvalidDataException("Catálogo de ciudades demasiado grande.");
         }
         if (cities.Count == 0 || cities.Count > 20_000) throw new InvalidDataException("Catálogo de ciudades vacío o demasiado grande.");
+    }
+
+    private static string? StringProperty(JsonElement element, string key) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static int Cell(double value) => (int)Math.Floor(value / CellSize);
+
+    private IEnumerable<MapCity> Candidates(double x, double z, double range)
+    {
+        if (!double.IsFinite(x) || !double.IsFinite(z) || Math.Abs(x) > 2_100_000 || Math.Abs(z) > 2_100_000) yield break;
+        for (var column = Cell(x - range); column <= Cell(x + range); column++)
+            for (var row = Cell(z - range); row <= Cell(z + range); row++)
+                if (cells.TryGetValue((column, row), out var bucket))
+                    foreach (var city in bucket) yield return city;
     }
 
     private static bool TryCoordinate(JsonElement value, out double number) =>
@@ -40,7 +76,7 @@ internal sealed class CityLookup
     {
         if (!double.IsFinite(x) || !double.IsFinite(z)) return null;
         const double range = 14_000;
-        var nearest = cities.Select(city => (City: city, Distance: Math.Sqrt((city.X - x) * (city.X - x) + (city.Z - z) * (city.Z - z))))
+        var nearest = Candidates(x, z, range).Select(city => (City: city, Distance: Math.Sqrt((city.X - x) * (city.X - x) + (city.Z - z) * (city.Z - z))))
             .Where(candidate => candidate.Distance <= range).OrderBy(candidate => candidate.Distance);
         using var matches = nearest.GetEnumerator();
         if (!matches.MoveNext() || matches.Current.City.Country is not { } country) return null;
@@ -58,7 +94,7 @@ internal sealed class CityLookup
         if (!double.IsFinite(x) || !double.IsFinite(z) || cities.Count == 0) return null;
         MapCity? nearest = null;
         var distanceSquared = 8000.0 * 8000.0;
-        foreach (var city in cities)
+        foreach (var city in Candidates(x, z, 8000))
         {
             var dx = city.X - x;
             var dz = city.Z - z;
@@ -68,6 +104,26 @@ internal sealed class CityLookup
             nearest = city;
         }
         return nearest?.Name;
+    }
+}
+
+internal static class PresencePrivacy
+{
+    internal static AppSettings Apply(AppSettings settings, bool? onJob, bool hideDestination)
+    {
+        if (hideDestination || onJob == true && settings.Features.HideDeliveryLocation)
+            return settings with { ShowCity = false, ShowRoute = false };
+        if (onJob == false && settings.Features.HideRoamingLocation) return settings with { ShowCity = false };
+        return settings;
+    }
+
+    internal static (string Route, string Distance) Overlay(AppSettings visibility, TelemetrySnapshot? trip,
+        bool sharing, string idle, string distance)
+    {
+        if (!sharing || !visibility.ShowRoute) return ("", "");
+        if (trip is not { OnJob: true, Paused: false })
+            return (string.IsNullOrWhiteSpace(visibility.Features.ObsWaiting) ? idle : visibility.Features.ObsWaiting, "");
+        return ($"{trip.SourceCity}  →  {trip.DestinationCity}", visibility.ShowDistance ? distance : "");
     }
 }
 

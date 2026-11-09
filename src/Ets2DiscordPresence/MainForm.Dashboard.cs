@@ -241,12 +241,29 @@ internal sealed partial class MainForm
             if (overlay is null) return;
             Clipboard.SetText(overlay.Url);
             MessageBox.Show(owner, L("Dirección copiada. En OBS, pégala en una fuente de navegador.",
-                "URL copied. Paste it into an OBS browser source."), Text);
+                "URL copied. Paste it into an OBS browser source.") + $"\n\n{overlay.Url}", Text);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Net.Sockets.SocketException
             or System.Runtime.InteropServices.ExternalException)
         {
             MessageBox.Show(owner, L("No se pudo iniciar o copiar la fuente de OBS.", "Could not start or copy the OBS source."), Text);
+        }
+    }
+
+    private void RegenerateObsUrl(IWin32Window owner)
+    {
+        if (!Confirm(owner, L("La dirección anterior dejará de funcionar. ¿Generar una nueva?",
+            "The old URL will stop working. Generate a new one?"))) return;
+        try
+        {
+            var key = Guid.NewGuid().ToString("N");
+            LocalData.WriteFile(Path.Combine(LocalData.Folder, "obs-key.txt"), key);
+            overlay?.Rotate(key);
+            CopyObsUrl(owner);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(owner, L("No se pudo regenerar la dirección.", "Could not regenerate the URL."), Text);
         }
     }
 
@@ -317,12 +334,14 @@ internal sealed partial class MainForm
         if (updating || availableUpdate is not { } update) return;
         if (update.Sha256 is null) { OpenExternal(update.Url); return; }
         updating = true;
+        var phase = "download";
         try
         {
             guidance.Text = L("Descargando la actualización…", "Downloading the update…");
             await AppUpdater.DownloadAsync(update, Application.ExecutablePath, lifetime.Token);
             if (IsDisposed || !Confirm(this, L("Actualización verificada. ¿Cerrar y volver a abrir la app para instalarla?",
                 "Update verified. Close and reopen the app to install it?"))) return;
+            phase = "swap";
             AppUpdater.Start(Application.ExecutablePath, rollback: false, update.Sha256);
             Close();
         }
@@ -330,6 +349,7 @@ internal sealed partial class MainForm
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or HttpRequestException
             or System.ComponentModel.Win32Exception)
         {
+            AppUpdater.RecordFailure(Application.ExecutablePath, phase, ex);
             if (!IsDisposed) MessageBox.Show(this, L("No se pudo actualizar desde esta carpeta. La versión actual sigue disponible.",
                 "Could not update from this folder. The current version is still available."), Text);
         }
