@@ -12,6 +12,13 @@ internal sealed partial class MainForm
         var units = Choice(style, L("Unidad de distancia", "Distance unit"), ["km", "mi"], current.Miles ? 1 : 0);
         var hours = Choice(style, L("Formato de hora", "Time format"), ["24 h", "12 h"], current.Clock12 ? 1 : 0);
         var contrast = Check(style, L("Texto e indicadores de alto contraste", "High-contrast text and indicators"), current.HighContrast);
+        var sidebarSize = Choice(style, L("Tamaño de la barra lateral", "Sidebar size"),
+            [L("Automático", "Automatic"), L("Compacto", "Compact"), L("Completo", "Full")],
+            current.SidebarSize switch { "compact" => 1, "full" => 2, _ => 0 });
+        var reduceMotion = Check(style, L("Reducir movimiento", "Reduce motion"), current.ReduceMotion);
+        int[] tableSizes = [100, 125, 150];
+        var tableSize = Choice(style, L("Tamaño de texto en tablas", "Table text size"),
+            tableSizes.Select(size => $"{size}%").ToArray(), Math.Max(0, Array.IndexOf(tableSizes, current.TableTextPercent)));
         var pins = new[] { "record", "privacy", "obs" };
         var pinChecks = pins.Select(key => Check(style, L("Fijar", "Pin") + " " + ActionName(key),
             current.Pinned?.Contains(key) == true)).ToArray();
@@ -20,15 +27,27 @@ internal sealed partial class MainForm
             current.AlertMode switch { "job" => 1, "always" => 2, _ => 0 });
         var rest = Check(game, L("Avisar cuando falte poco para descansar", "Warn when a rest stop is due"), current.RestNotice);
         var lowPower = Check(game, L("Reducir actualizaciones al minimizar", "Reduce updates when minimized"), current.LowPower);
+        AddRows(game, TextLabel(L("Consulta el juego con menos frecuencia al minimizar, cuando estás fuera de una entrega.",
+            "Checks the game less often when minimized and outside a delivery."), 9));
         var reconnect = Check(discord, L("Avisar cuando Discord se reconecte", "Notify on Discord reconnect"), current.ReconnectNotice);
+        var gameMap = Check(discord, L("Detectar el mapa", "Detect the map"), current.RecognizeMap ?? current.RecognizeGameScreens);
+        var gamePhoto = Check(discord, L("Detectar el modo foto", "Detect photo mode"), current.RecognizePhoto ?? current.RecognizeGameScreens);
+        if (!GameScreenReader.HasRecognitionLanguage)
+            AddRows(discord, TextLabel(L("Windows no tiene un idioma de reconocimiento de texto. Agrégalo en Configuración de Windows.",
+                "Windows has no text recognition language installed. Add one in Windows Settings."), 9));
+        var freeDrive = Check(game, L("Guardar conducción libre en el Diario", "Log free driving in the journal"), current.JournalFreeDrive);
+        AddRows(discord, TextLabel(L("Lee los textos de la ventana de ETS2 en primer plano. Las imágenes se procesan en tu equipo.",
+            "Reads text from the ETS2 window in the foreground. Images are processed on your device."), 9));
         var timerMode = Choice(discord, L("Duración que muestra Discord", "Discord timer duration"),
             [L("Actividad actual", "Current activity"), L("Sesión de juego", "Game session")], current.SessionTimer ? 1 : 0);
         var hideRoaming = Check(privacy, L("Ocultar ubicación en conducción libre", "Hide location in free roaming"), current.HideRoamingLocation);
         var hideDelivery = Check(privacy, L("Ocultar ubicación y ruta durante entregas", "Hide location and route during deliveries"), current.HideDeliveryLocation);
+        AddRows(privacy, TextLabel(L("Estas reglas se aplican a Discord y a las fuentes de OBS.", "These rules apply to Discord and OBS sources."), 9));
         var pauseKey = Check(privacy, L("Atajo de pausa total · Ctrl + Alt + F11", "Pause sharing shortcut · Ctrl + Alt + F11"), current.PauseShortcut);
         var templates = AddTab(tabs, L("Plantillas", "Templates"));
-        var roam = FeatureText(templates, L("Texto de conducción libre", "Free-roam headline"), current.RoamTemplate, 128);
-        var delivery = FeatureText(templates, L("Texto de entrega", "Delivery headline"), current.DeliveryTemplate, 128);
+        var roam = FeatureText(templates, L("Texto de conducción libre", "Free-roam headline"), current.RoamTemplate, 512);
+        var delivery = FeatureText(templates, L("Texto de entrega", "Delivery headline"), current.DeliveryTemplate, 512);
+        AddTemplatePreview(templates, roam, delivery);
         var presets = Choice(templates, L("Cargar una plantilla", "Load a template"),
             [L("Elegir…", "Choose…"), L("Solo actividad", "Activity only"), L("Camión y carga", "Truck and cargo"),
                 L("Exploración", "Exploration")], 0);
@@ -57,6 +76,7 @@ internal sealed partial class MainForm
             Math.Max(0, Array.IndexOf(sizes, current.ObsSize)));
         var obsDistance = Check(obs, L("Mostrar distancia en OBS", "Show distance in OBS"), current.ObsDistance);
         var browser = Check(obs, L("Activar la fuente de navegador local", "Enable local browser source"), current.ObsBrowser);
+        AddRows(obs, TextLabel(L("Activa la fuente para copiar su dirección y usarla en OBS.", "Enable the browser source to copy its address and use it in OBS."), 9));
         var obsRoute = Check(obs, L("Mostrar ruta en OBS", "Show route in OBS"), current.ObsRoute);
         var position = Choice(obs, L("Posición en la fuente de navegador", "Browser source position"),
             [L("Izquierda", "Left"), L("Centro", "Center"), L("Derecha", "Right")],
@@ -70,6 +90,22 @@ internal sealed partial class MainForm
         var radii = new[] { 0, 8, 16, 24 };
         var radius = Choice(obs, L("Redondeo de bordes", "Corner rounding"), radii.Select(value => $"{value} px").ToArray(),
             Math.Max(0, Array.IndexOf(radii, current.ObsRadius)));
+        void BrowserOptionsChanged()
+        {
+            foreach (var control in new Control[] { waiting, position, font, opacity, radius }) control.Enabled = browser.Checked;
+        }
+        browser.CheckedChanged += (_, _) => BrowserOptionsChanged();
+        BrowserOptionsChanged();
+        var browserState = TextLabel("", 9);
+        void LabelBrowserState()
+        {
+            browserState.Text = browser.Checked ? "" : L("Ajustes de fuente no disponibles · El navegador de OBS está desactivado.",
+                "Source settings unavailable · The OBS browser source is off.");
+            browserState.Visible = !browser.Checked;
+        }
+        browser.CheckedChanged += (_, _) => LabelBrowserState();
+        LabelBrowserState();
+        AddRows(obs, browserState);
         BrowserOverlay? previewServer = null;
         var previewTimer = new System.Windows.Forms.Timer { Interval = 500 };
         owner.FormClosed += (_, _) =>
@@ -129,14 +165,21 @@ internal sealed partial class MainForm
         var intervals = new[] { 1, 7, 30 };
         var interval = Choice(data, L("Frecuencia de copias mientras la app está abierta", "Backup frequency while the app is open"),
             intervals.Select(days => L($"{days} día(s)", $"{days} day(s)")).ToArray(), Math.Max(0, Array.IndexOf(intervals, current.BackupIntervalDays)));
+        int[] keepCounts = [5, 10, 20];
+        var backupKeep = Choice(data, L("Conservar copias automáticas", "Keep automatic backups"),
+            keepCounts.Select(count => count.ToString()).ToArray(), Math.Max(0, Array.IndexOf(keepCounts, current.BackupKeep)));
+        var backupWarning = Check(data, L("Avisar si todavía no hay copias", "Warn when no backup exists"), current.WarnMissingBackup);
 
         return () => preferences.Features with
         {
             Layout = layout.SelectedIndex switch { 1 => "drive", 2 => "stream", _ => "full" },
+            SidebarSize = sidebarSize.SelectedIndex switch { 1 => "compact", 2 => "full", _ => "auto" },
+            ReduceMotion = reduceMotion.Checked, TableTextPercent = tableSizes[tableSize.SelectedIndex],
             Miles = units.SelectedIndex == 1, Clock12 = hours.SelectedIndex == 1, HighContrast = contrast.Checked,
             AlertMode = alerts.SelectedIndex switch { 1 => "job", 2 => "always", _ => "normal" },
             Pinned = pins.Where((key, index) => pinChecks[index].Checked).ToArray(),
             RestNotice = rest.Checked, LowPower = lowPower.Checked, ReconnectNotice = reconnect.Checked,
+            RecognizeMap = gameMap.Checked, RecognizePhoto = gamePhoto.Checked, JournalFreeDrive = freeDrive.Checked,
             SessionTimer = timerMode.SelectedIndex == 1, HideRoamingLocation = hideRoaming.Checked, HideDeliveryLocation = hideDelivery.Checked, PauseShortcut = pauseKey.Checked,
             RoamTemplate = roam.Text.Trim(), DeliveryTemplate = delivery.Text.Trim(), ObsWaiting = waiting.Text.Trim(),
             ObsFont = fontSizes[font.SelectedIndex], ObsOpacity = opacities[opacity.SelectedIndex], ObsRadius = radii[radius.SelectedIndex],
@@ -144,7 +187,8 @@ internal sealed partial class MainForm
             ObsBrowser = browser.Checked || !current.ObsBrowser && preferences.Features.ObsBrowser,
             ObsPosition = position.SelectedIndex switch { 1 => "center", 2 => "right", _ => "left" },
             AutoRecord = auto.Checked, RecordingLimitMb = limits[limit.SelectedIndex],
-            BackupFolder = backup.Text.Trim(), BackupIntervalDays = intervals[interval.SelectedIndex]
+            BackupFolder = backup.Text.Trim(), BackupIntervalDays = intervals[interval.SelectedIndex],
+            BackupKeep = keepCounts[backupKeep.SelectedIndex], WarnMissingBackup = backupWarning.Checked
         };
     }
 
@@ -155,19 +199,82 @@ internal sealed partial class MainForm
         return field;
     }
 
+    private void AddTemplatePreview(TableLayoutPanel panel, TextBox roam, TextBox delivery)
+    {
+        var scenario = Choice(panel, L("Ejemplo de Discord", "Discord sample"),
+            [L("Entrega", "Delivery"), L("Conducción libre", "Free roam"), L("Pausa", "Paused")], 0);
+        var previewLabel = TextLabel("", 10);
+        AddRows(panel, previewLabel);
+        void Update()
+        {
+            var example = scenario.SelectedIndex switch { 1 => Sample with { OnJob = false }, 2 => Sample with { Paused = true }, _ => Sample };
+            var settings = preferences with { Options = preferences.Features with { RoamTemplate = roam.Text, DeliveryTemplate = delivery.Text } };
+            var visibility = PresencePrivacy.Apply(settings, example.OnJob, privateDestination);
+            var formatted = PresenceFormatter.Format(example, "Chambéry", visibility, "FR");
+            var template = example.OnJob ? delivery.Text : roam.Text;
+            var raw = example.Paused ? null : PresenceFormatter.Template(template, example, visibility,
+                visibility.ShowCity ? Countries.Name("FR", English) : null);
+            var bytes = System.Text.Encoding.UTF8.GetByteCount(raw ?? formatted.Details);
+            var unknown = PresenceFormatter.UnknownVariables(roam.Text + " " + delivery.Text);
+            var errors = unknown.Length > 0 ? L("Variables no reconocidas", "Unknown variables") + $" · {string.Join(", ", unknown)}\n" : "";
+            previewLabel.Text = $"{errors}{bytes} / 128 bytes\n{formatted.Details}\n{formatted.State}";
+            SetWrap(previewLabel, Math.Max(180, panel.Width - 40));
+        }
+        roam.TextChanged += (_, _) => Update();
+        delivery.TextChanged += (_, _) => Update();
+        scenario.SelectedIndexChanged += (_, _) => Update();
+        panel.Resize += (_, _) => Update();
+        Update();
+    }
+
     private void AddSettingsSearch(Form owner, TabControl tabs)
     {
         var bar = Grid(1);
         bar.Padding = new Padding(8);
-        var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Buscar un ajuste…", "Find a setting…") };
+        var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Buscar un ajuste…", "Find a setting…"),
+            AccessibleName = L("Buscar un ajuste", "Find a setting") };
+        var breadcrumb = TextLabel("", 9, true);
+        void UpdateBreadcrumb()
+        {
+            var title = tabs.SelectedTab?.Text ?? "";
+            breadcrumb.Text = title == L("Plantillas", "Templates")
+                ? L("Ajustes › Discord › Plantillas", "Settings › Discord › Templates")
+                : $"{L("Ajustes", "Settings")} › {title}";
+        }
+        tabs.SelectedIndexChanged += (_, _) => UpdateBreadcrumb();
+        UpdateBreadcrumb();
         var results = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false,
             AccessibleName = L("Resultados de búsqueda", "Search results") };
-        AddRows(bar, search, results);
+        var input = Grid(3);
+        input.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        input.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var glass = TextLabel("⌕", 14, true);
+        var clear = MakeButton("×");
+        clear.AccessibleName = L("Borrar búsqueda", "Clear search");
+        clear.Enabled = false;
+        clear.Click += (_, _) => { search.Clear(); search.Focus(); };
+        input.Controls.Add(glass, 0, 0);
+        input.Controls.Add(search, 1, 0);
+        input.Controls.Add(clear, 2, 0);
+        AddRows(bar, breadcrumb, input, results);
         owner.Controls.Add(bar);
+        var highlight = new System.Windows.Forms.Timer { Interval = 1400 };
+        Control? highlighted = null;
+        Color original = Color.Empty;
+        void ResetHighlight()
+        {
+            highlight.Stop();
+            if (highlighted is not null && !highlighted.IsDisposed) highlighted.BackColor = original;
+            highlighted = null;
+        }
+        highlight.Tick += (_, _) => ResetHighlight();
+        owner.Disposed += (_, _) => highlight.Dispose();
         search.TextChanged += (_, _) =>
         {
             results.Items.Clear();
             var query = search.Text.Trim();
+            clear.Enabled = search.TextLength > 0;
             results.Visible = query.Length > 0;
             if (query.Length == 0) return;
             foreach (TabPage page in tabs.TabPages)
@@ -187,6 +294,11 @@ internal sealed partial class MainForm
             tabs.SelectedTab = match.Page;
             match.Page.ScrollControlIntoView(match.Control);
             match.Control.Focus();
+            ResetHighlight();
+            highlighted = match.Control;
+            original = highlighted.BackColor;
+            highlighted.BackColor = shellPalette.Hover;
+            highlight.Start();
         }
         results.SelectionChangeCommitted += (_, _) => OpenMatch();
         search.KeyDown += (_, e) =>
@@ -208,6 +320,6 @@ internal sealed partial class MainForm
 
     private sealed record SettingsMatch(TabPage Page, Control Control, string Title)
     {
-        public override string ToString() => $"{Page.Text} · {Title}";
+        public override string ToString() => $"{Title}   —   {Page.Text}";
     }
 }

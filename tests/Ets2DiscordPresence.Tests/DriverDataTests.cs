@@ -6,6 +6,41 @@ namespace Ets2DiscordPresence.Tests;
 
 public sealed class DriverDataTests
 {
+    [Theory]
+    [InlineData(true, true, false, "coach")]
+    [InlineData(false, false, true, "free")]
+    public void ObservedDriveClosesOnceWithoutClaimingDelivery(bool coach, bool onJob, bool keepFree, string kind)
+    {
+        using var folder = new ScratchFolder();
+        var journal = new TripJournal(Path.Combine(folder.Path, "trips.json"));
+        var time = DateTimeOffset.UtcNow;
+        var signals = new TripSignals(0, 0, false, false, false, false, false, false, 15, 100, 0, 0, "");
+        var trip = new TelemetrySnapshot(false, onJob, "", "Lyon", "Paris", 0, 0, 0, 12, Signals: signals, Coach: coach);
+        Assert.Null(journal.ObserveDrive(trip, time, 0, keepFree, true));
+        Assert.Null(journal.ObserveDrive(trip with { Signals = signals with { Odometer = 100.25f } }, time.AddSeconds(2), 2000, keepFree, true));
+        var result = Assert.IsType<TripEntry>(journal.ObserveDrive(null, time.AddSeconds(3), 3000, keepFree, false));
+        Assert.Equal(kind, result.JourneyType);
+        Assert.Equal("ended", result.Result);
+        Assert.Equal(.25, result.Km);
+        Assert.Null(journal.ObserveDrive(null, time.AddSeconds(4), 4000, keepFree, false));
+        Assert.Single(journal.Entries);
+    }
+
+    [Fact]
+    public void InterruptedRestoreRollsBackOnNextStartup()
+    {
+        using var folder = new ScratchFolder();
+        var settings = Path.Combine(folder.Path, "settings.json");
+        var backup = Path.Combine(folder.Path, "backups", "previous.ets2backup");
+        File.WriteAllText(settings, """{"Language":"es"}""");
+        LocalData.Backup(backup, folder.Path);
+        File.WriteAllText(settings, """{"Language":"en"}""");
+        File.WriteAllText(Path.Combine(folder.Path, "restore-pending.txt"), "previous.ets2backup");
+        Assert.True(LocalData.RecoverInterruptedRestore(folder.Path));
+        Assert.Equal("""{"Language":"es"}""", File.ReadAllText(settings));
+        Assert.False(LocalData.RecoverInterruptedRestore(folder.Path));
+    }
+
     [Fact]
     public void LegacyTripCanBeAnnotatedAndRemovedWithoutChangingAnotherDriversJournal()
     {

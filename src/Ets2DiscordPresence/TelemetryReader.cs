@@ -7,7 +7,7 @@ internal sealed record TelemetrySnapshot(
     bool Paused, bool OnJob, string Cargo, string SourceCity, string DestinationCity,
     double X, double Z, float RouteDistanceMeters, uint PluginRevision,
     ulong RenderTime = 0, uint GameMinutes = 0, float RouteSeconds = 0, uint PlannedDistanceKm = 0,
-    TripSignals? Signals = null, TruckInfo? Truck = null)
+    TripSignals? Signals = null, TruckInfo? Truck = null, bool Coach = false)
 {
     public double? RemainingKm => float.IsFinite(RouteDistanceMeters) && RouteDistanceMeters > 0
         ? RouteDistanceMeters / 1000d : null;
@@ -29,7 +29,7 @@ internal sealed record TruckInfo(string Brand, string Model, float? Litres, floa
 
 internal sealed record TripSignals(uint Deadline, uint FinishedAt, bool Delivered, bool Cancelled,
     bool Loaded, bool Ferry, bool Refueling, bool ParkBrake, float Speed, float Odometer,
-    int RestMinutes, float DeliveredKm, string JobKey, string DestinationId = "");
+    int RestMinutes, float DeliveredKm, string JobKey, string DestinationId = "", long? Revenue = null);
 
 internal static class TelemetryReader
 {
@@ -55,6 +55,7 @@ internal static class TelemetryReader
             if (bytes[0] != 0) detectedRevision = BitConverter.ToUInt32(bytes.AsSpan(40, 4));
             snapshot = Parse(bytes);
             if (snapshot is null) error = "ETS2 todavía no está enviando datos del viaje.";
+            else snapshot = CoachTelemetry.Apply(snapshot, CoachTelemetry.Read());
             return snapshot is not null;
         }
         catch (FileNotFoundException)
@@ -118,7 +119,8 @@ internal static class TelemetryReader
                 DeliveredKm: BitConverter.ToSingle(data.Slice(1460, 4)),
                 JobKey: string.Join("|", ReadString(data, 2556, 64), ReadString(data, 2940, 64),
                     ReadString(data, 3068, 64), ReadString(data, 2684, 64), ReadString(data, 2812, 64)),
-                DestinationId: ReadString(data, 2684, 64)),
+                DestinationId: ReadString(data, 2684, 64),
+                Revenue: data[4303] != 0 ? BitConverter.ToInt64(data.Slice(4208, 8)) : null),
             Truck: new TruckInfo(ReadString(data, 2364, 64), ReadString(data, 2492, 64),
                 FiniteFloat(data, 1000), FiniteFloat(data, 704), FiniteFloat(data, 1008), FiniteFloat(data, 1004)));
     }

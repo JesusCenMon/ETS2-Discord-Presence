@@ -200,11 +200,89 @@ public sealed class ReleaseReliabilityTests
         TelemetryReplay.Save(path + ".gz", legacy.Frames);
         var gzip = TelemetryReplay.ReadDetailed(path + ".gz");
         Assert.False(gzip.RecoveredTail);
-        Assert.Equal(1, gzip.Metadata?.SchemaVersion);
+        Assert.Equal(2, gzip.Metadata?.SchemaVersion);
+        Assert.Equal(1, gzip.Metadata?.FrameCount);
+        Assert.Equal(0, gzip.Metadata?.MarkersCount);
         Assert.Equal(legacy.Frames, gzip.Frames);
+        using (var writer = File.CreateText(path))
+        {
+            TelemetryReplay.WriteHeader(writer);
+            TelemetryReplay.Write(writer, legacy.Frames[0]);
+        }
+        Assert.Equal(1, TelemetryReplay.ReadDetailed(path).Metadata?.SchemaVersion);
     }
 
     private static MemoryStream Bytes(string value) => new(Encoding.UTF8.GetBytes(value));
+
+    [Fact]
+    public void TripMeasurementsExcludePausedAndTeleportedFramesAndSeparateRefueling()
+    {
+        using var temp = new Scratch();
+        var journal = new TripJournal(Path.Combine(temp.Path, "trips.json"));
+        var utc = DateTimeOffset.UnixEpoch;
+        var signals = new TripSignals(100, 0, false, false, true, false, false, false, 10, 500, 200, 0, "job");
+        var trip = new TelemetrySnapshot(false, true, "Boxes", "Madrid", "Lyon", 0, 0, 150_000, 12,
+            Signals: signals, Truck: new TruckInfo("Renault", "T", 100, 600));
+        void Observe(int sec, TelemetrySnapshot sample, string? country = "ES") =>
+            journal.Observe(sample with { RenderTime = (ulong)sec + 1 }, utc.AddSeconds(sec), sec * 1000L, country);
+        Observe(0, trip with { OnJob = false });
+        Observe(2, trip);
+        var moving = trip with { X = 60, Signals = signals with { Odometer = 500.125f }, Truck = trip.Truck! with { Litres = 99 } };
+        Observe(4, moving);
+        Observe(6, moving with { Paused = true });
+        var still = moving with { Signals = moving.Signals! with { Speed = 0, Refueling = true }, Truck = trip.Truck! with { Litres = 200 } };
+        Observe(8, still);
+        Observe(10, still with { Truck = trip.Truck! with { Litres = 250 } });
+        var far = still with { X = 50_000, Signals = still.Signals! with { Speed = 80, Refueling = false } };
+        Observe(12, far, "FR");
+        var delivered = journal.Observe(far with { OnJob = false, Signals = far.Signals! with { Delivered = true, FinishedAt = 95, DeliveredKm = 150 } },
+            utc.AddSeconds(14), 14_000, "FR");
+        var entry = Assert.IsType<TripEntry>(delivered);
+        var measured = Assert.IsType<TripMeasurements>(entry.Measurements);
+        Assert.Equal("complete", measured.Quality);
+        Assert.Equal(2, measured.MovingSeconds);
+        Assert.Equal(2, measured.StoppedSeconds);
+        Assert.Equal(36, measured.AverageKph);
+        Assert.Equal(36, measured.MaximumKph);
+        Assert.Equal(1, entry.FuelLitres);
+        Assert.Equal(50, measured.RefueledLitres);
+        Assert.Equal(.125, measured.ObservedKm);
+        Assert.Equal(150, measured.DeliveredKm);
+        Assert.Equal(new[] { "ES", "FR" }, measured.Countries);
+    }
+
+    [Fact]
+    public void PresenceTemplatesHonorPrivacyAndCountUtf8Bytes()
+    {
+        var trip = new TelemetrySnapshot(false, true, "Carga", "Lyon", "Turín", 0, 0, 1000, 12);
+        var text = "{if:cargo}{cargo}{/if} {truck|Camión} {ciudaad}";
+        Assert.Equal(new[] { "ciudaad" }, PresenceFormatter.UnknownVariables(text));
+        Assert.Equal("Carga Camión", PresenceFormatter.Template(text, trip, new AppSettings(), null));
+        Assert.Equal("Camión", PresenceFormatter.Template(text, trip, new AppSettings(ShowCargo: false), null));
+        var truncated = PresenceFormatter.Limit(new string('á', 90));
+        Assert.EndsWith("…", truncated);
+        Assert.InRange(Encoding.UTF8.GetByteCount(truncated), 125, 128);
+    }
+
+    [Fact]
+    public void PartialRestoreSnapshotUndoesNewFiles()
+    {
+        using var source = new Scratch();
+        using var destination = new Scratch();
+        var backup = Path.Combine(source.Path, "copy.ets2backup");
+        var snapshot = Path.Combine(destination.Path, "undo.ets2backup");
+        var settings = Path.Combine(source.Path, "settings.json");
+        var trips = Path.Combine(source.Path, "trips.json");
+        File.WriteAllText(settings, "{}");
+        File.WriteAllText(trips, "{\"Entries\":[],\"Pending\":[]}");
+        LocalData.Backup(backup, source.Path);
+        LocalData.Restore(backup, destination.Path, new HashSet<string> { "trips" }, snapshot);
+        Assert.False(File.Exists(Path.Combine(destination.Path, "settings.json")));
+        Assert.True(File.Exists(Path.Combine(destination.Path, "trips.json")));
+        Assert.Equal(1, LocalData.InspectBackup(snapshot).RemovalCount);
+        LocalData.Restore(snapshot, destination.Path);
+        Assert.False(File.Exists(Path.Combine(destination.Path, "trips.json")));
+    }
 
     private sealed class Scratch : IDisposable
     {

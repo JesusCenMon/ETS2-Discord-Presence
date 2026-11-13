@@ -6,10 +6,8 @@ internal sealed partial class MainForm
     private readonly Label driveSummary = TextLabel("", 21, true);
     private readonly Label previewMetadata = TextLabel("", 9);
     private readonly FlowLayoutPanel previewArt = ToolBar();
-    private readonly PictureBox previewLarge = new() { Size = new Size(84, 64), SizeMode = PictureBoxSizeMode.Zoom };
-    private readonly PictureBox previewBadge = new() { Size = new Size(28, 28), SizeMode = PictureBoxSizeMode.Zoom };
+    private readonly PictureBox previewLarge = new() { Size = new Size(120, 120), SizeMode = PictureBoxSizeMode.Zoom };
     private string? previewImageKey;
-    private string? previewBadgeKey;
     private bool updating;
     private volatile PresenceText? lastSent;
     private volatile bool discordConfirmed;
@@ -55,6 +53,50 @@ internal sealed partial class MainForm
         driveSummary.Padding = new Padding(12);
     }
 
+    private readonly Label tripStatus = TextLabel("", 10);
+    private double? etaDeltaMinutes;
+    private bool routeRecalculated;
+    private int stableRouteSamples;
+
+    private void RenderTripMeasurements(TelemetrySnapshot? trip, bool isLive, long now)
+    {
+        var values = new List<string>();
+        var measured = isLive && trip?.OnJob == true ? journal.LiveMeasurements : null;
+        if (trip?.Signals is { Speed: >= -100 and <= 100 } signals)
+            values.Add(L($"Velocidad {SpeedLabel(Math.Abs(signals.Speed) * 3.6).PadLeft(8, '\u2007')}", $"Speed {SpeedLabel(Math.Abs(signals.Speed) * 3.6).PadLeft(8, '\u2007')}"));
+        if (measured?.AverageKph is { } average) values.Add(L($"Media {SpeedLabel(average)}", $"Avg. {SpeedLabel(average)}"));
+        if (measured is { MaximumKph: not null })
+        {
+            driveTime.Text = L($"Al volante  {Duration(measured.MovingSeconds)}", $"Driving  {Duration(measured.MovingSeconds)}");
+            stoppedTime.Text = L($"Detenido  {Duration(measured.StoppedSeconds)}", $"Stopped  {Duration(measured.StoppedSeconds)}");
+        }
+        tripTimes.Visible = measured?.MaximumKph is not null && preferences.Features.Layout != "drive"
+            && preferences.HiddenPanels?.Contains("metrics") != true;
+        arrivalNotice.Visible = false;
+        if (trip?.Progress is { } percent) values.Add(L($"Progreso {percent}%", $"Progress {percent}%"));
+        if (isLive && trip?.OnJob == true)
+        {
+            if (routeChangedUntil > now)
+            {
+                arrivalNotice.Text = L("Ruta recalculada", "Route recalculated")
+                    + (etaDeltaMinutes is { } delta && Math.Abs(delta) >= 1 ? $" · {delta:+0;-0} min" : "");
+                arrivalNotice.Visible = true;
+            }
+            else
+                values.Add(trip.ArrivalTime is not null && stableRouteSamples >= 3
+                    ? L("ETA estable", "ETA stable") : L("ETA incierta", "ETA uncertain"));
+        }
+        tripStatus.Visible = values.Count > 0 && preferences.HiddenPanels?.Contains("metrics") != true;
+        tripStatus.Text = values.Count == 0 ? "" : L("Estado del viaje", "Trip status") + "\n" + string.Join("  ·  ", values);
+    }
+
+    private string SpeedLabel(double kph) => preferences.Features.Miles ? $"{kph / 1.609344:N0} mph" : $"{kph:N0} km/h";
+    private static string Duration(double seconds)
+    {
+        var time = TimeSpan.FromSeconds(Math.Clamp(seconds, 0, 100_000_000));
+        return $"{(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}";
+    }
+
     private void RenderDashboard(TelemetrySnapshot? displayed, bool running, bool connected, long now)
     {
         var options = preferences.Features;
@@ -75,7 +117,14 @@ internal sealed partial class MainForm
         var km = displayed?.RemainingKm is { } remaining ? AppOptions.Distance(remaining, options.Miles) : "—";
         var next = displayed?.OnJob == true && !string.IsNullOrWhiteSpace(displayed.DestinationCity)
             ? displayed.DestinationCity : city ?? Countries.Name(currentCountry, English) ?? L("Sin destino", "No destination");
-        driveSummary.Text = $"{next}  ·  {km}\nDiscord {(connected ? L("conectado", "connected") : L("sin conexión", "offline"))}";
+        var eta = displayed?.ArrivalTime is { } time ? $"  ·  {L("Llegada", "Arrival")} {time}" : "";
+        driveSummary.Text = $"{next}  ·  {km}{eta}\nDiscord {(connected ? L("conectado", "connected") : L("sin conexión", "offline"))}";
+        RenderTripMeasurements(displayed, !demo && demoScenario is null, now);
+        if (driving)
+        {
+            if (tripStatus.Visible) driveSummary.Text += "\n" + tripStatus.Text;
+            tripStatus.Visible = false;
+        }
         if (driving) mapSection.Visible = false;
         else mapSection.Visible = preferences.HiddenPanels?.Contains("map") != true && (!preferences.Compact || fullScreen);
         if (driving) preview.Visible = false;
@@ -94,9 +143,8 @@ internal sealed partial class MainForm
     private void ConfigurePreviewArt()
     {
         previewLarge.AccessibleName = L("Imagen de la actividad", "Activity artwork");
-        previewBadge.AccessibleName = L("Insignia de la actividad", "Activity badge");
-        previewArt.Controls.AddRange([previewLarge, previewBadge]);
-        Disposed += (_, _) => { previewLarge.Image?.Dispose(); previewBadge.Image?.Dispose(); };
+        previewArt.Controls.Add(previewLarge);
+        Disposed += (_, _) => previewLarge.Image?.Dispose();
     }
 
     private static readonly HttpClient PreviewClient = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -132,8 +180,9 @@ internal sealed partial class MainForm
     {
         if (image is null) return null;
         var file = Path.GetFileName(image);
-        if (file is not ("hero-truck.png" or "delivery.png" or "roam.png" or "paused.png")) return null;
-        using var input = AppResources.Open(file);
+        var resource = DiscordIdentity.CountryArtworkResource(image);
+        if (resource is null && file != "hero-truck.png") return null;
+        using var input = AppResources.Open(resource ?? file);
         using var picture = Image.FromStream(input);
         return new Bitmap(picture);
     }
@@ -150,18 +199,11 @@ internal sealed partial class MainForm
             previewImageKey = shown?.Image;
             previewLarge.Image?.Dispose();
             previewLarge.Image = LoadPreviewImage(previewImageKey);
+            SyncHomeArt();
             if (previewLarge.Image is null && previewImageKey is { } remote) _ = UpdateLargePreviewAsync(remote);
         }
-        if (previewBadgeKey != shown?.Badge)
-        {
-            previewBadgeKey = shown?.Badge;
-            previewBadge.Image?.Dispose();
-            previewBadge.Image = LoadPreviewImage(previewBadgeKey);
-        }
-        SyncHomeArt();
         RenderHomePresence(shown, outgoing, age);
-        previewArt.Visible = previewLarge.Image is not null || previewBadge.Image is not null;
-        previewBadge.Visible = previewBadge.Image is not null;
+        previewArt.Visible = previewLarge.Image is not null;
         if (shown is null)
         {
             details.Text = L("Actividad en espera", "Activity on hold");
@@ -199,8 +241,22 @@ internal sealed partial class MainForm
             && Math.Abs(next - previous) >= Math.Max(25, previous * .2);
         var etaChanged = eta is > 0 and < 604800 && lastEta is > 0 and < 604800
             && Math.Abs(eta.Value - lastEta.Value) >= Math.Max(1800, lastEta.Value * .35);
-        if (key is not null && key == lastRouteKey && (distanceChanged || etaChanged))
+        routeRecalculated = live is { Paused: false } && key is not null && key == lastRouteKey
+            && (distanceChanged || etaChanged);
+        if (key is null || key != lastRouteKey || live is not { Paused: false })
+        {
+            routeChangedUntil = 0;
+            stableRouteSamples = 0;
+        }
+        else if (routeRecalculated)
+        {
             routeChangedUntil = Environment.TickCount64 + 12_000;
+            etaDeltaMinutes = eta is > 0 and < 604800 && lastEta is > 0 and < 604800
+                ? (eta.Value - lastEta.Value) / 60d : null;
+            stableRouteSamples = 0;
+        }
+        else if (eta is > 0 and < 604800 && remaining is > 0) stableRouteSamples = Math.Min(3, stableRouteSamples + 1);
+        else stableRouteSamples = 0;
         lastRouteKey = key;
         lastRemaining = remaining;
         lastEta = eta;
@@ -208,6 +264,10 @@ internal sealed partial class MainForm
 
     private long routeChangedUntil;
     private string? quotaWarning;
+    private long lastDiscordConnection;
+    private long lastDiscordPublication;
+    private volatile string? lastDiscordError;
+    private bool releaseArtwork;
 
     private void ShowPrivacyMenu(Control anchor)
     {
@@ -297,7 +357,7 @@ internal sealed partial class MainForm
             var active = liveSnapshot is not null && discordReady && preferences.Sharing
                 && !demo && demoScenario is null && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
             steps.Text = $"1. {gameStatus.Text}\n2. {discordStatus.Text}\n3. "
-                + (active && discordConfirmed ? L("Actividad confirmada por Discord", "Activity acknowledged by Discord")
+                + (active && discordConfirmed ? L("Texto confirmado por Discord", "Text acknowledged by Discord")
                     : active ? L("Actividad enviada, esperando respuesta", "Activity sent, awaiting acknowledgement")
                     : L("Actividad pendiente", "Activity pending"))
                 + $"\n\n{guidance.Text}";
@@ -306,7 +366,28 @@ internal sealed partial class MainForm
         AddAction(content, L("Abrir Discord", "Open Discord"), () => OpenExternal("discord://"));
         AddAction(content, L("Abrir ETS2", "Launch ETS2"), () => OpenExternal("steam://rungameid/227300"));
         AddAction(content, L("Comprobar ahora", "Check now"), () => { RefreshPresence(); Render(); });
+        AddAction(content, L("Republicar actividad", "Republish activity"), () =>
+        {
+            Interlocked.Increment(ref connectionGeneration);
+            publishImmediately = true;
+            RefreshPresence();
+            Render();
+        });
         AddAction(content, L("Exportar diagnóstico…", "Export diagnostics…"), () => ExportDiagnostics(window));
+        var artStatus = TextLabel("", 10);
+        AddRows(content, artStatus);
+        AddAction(content, L("Comprobar imágenes de Discord", "Check Discord artwork"), async () =>
+        {
+            artStatus.Text = L("Comprobando…", "Checking…");
+            var visible = PresencePrivacy.Apply(preferences, liveSnapshot?.OnJob, privateDestination);
+            var code = visible.SharesCountry ? currentCountry : null;
+            var english = preferences.DiscordLanguage == "en";
+            var images = new[] { DiscordIdentity.ImageFor(code, english: english),
+                DiscordIdentity.ImageFor(code, english: english, coach: true) };
+            var checks = await Task.WhenAll(images.Select(VerifyArtworkAsync));
+            if (!window.IsDisposed) artStatus.Text = L($"Imágenes disponibles · {checks.Count(available => available)} de {images.Length}",
+                $"Artwork available · {checks.Count(available => available)} of {images.Length}");
+        });
         var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         panel.Controls.Add(content);
         window.Controls.Add(panel);
@@ -325,8 +406,31 @@ internal sealed partial class MainForm
             ? System.Diagnostics.FileVersionInfo.GetVersionInfo(Path.Combine(gamePath!, "bin", "win_x64", "eurotrucks2.exe")).FileVersion : null;
         var report = string.Join(Environment.NewLine, $"ETS2 Discord Presence {DesktopServices.Version.ToString(3)}",
             $"OS {Environment.OSVersion.Version}", $"ETS2: {version ?? "—"}", $"Plugin API: {lastRevision?.ToString() ?? "—"}",
-            gameStatus.Text, discordStatus.Text, $"Setup error: {setupError is not null}", $"Reader error: {readerError is not null}");
+            gameStatus.Text, discordStatus.Text, $"Setup error: {setupError is not null}", $"Reader error: {readerError is not null}",
+            $"Discord connection: {DiscordDiagnosticTime(Interlocked.Read(ref lastDiscordConnection))}",
+            $"Discord publication: {DiscordDiagnosticTime(Interlocked.Read(ref lastDiscordPublication))}",
+            $"Discord error: {lastDiscordError ?? "—"}");
         DataAction(owner, () => File.WriteAllText(picker.FileName, report));
+    }
+
+    private static string DiscordDiagnosticTime(long seconds) => seconds == 0 ? "—" : DateTimeOffset.FromUnixTimeSeconds(seconds).ToString("O");
+
+    private async Task CheckReleaseArtworkAsync()
+    {
+        if (!preferences.ActivityImage) return;
+        var available = await VerifyArtworkAsync(DiscordIdentity.ActivityImage);
+        if (!IsDisposed) releaseArtwork = available;
+    }
+
+    private async Task<bool> VerifyArtworkAsync(string uri)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Head, uri);
+            using var response = await PreviewClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
+            return response.IsSuccessStatusCode && response.Content.Headers.ContentType?.MediaType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException) { return false; }
     }
 
     private async void ShowUpdate()
@@ -377,7 +481,7 @@ internal sealed partial class MainForm
         var content = Grid(1);
         content.Padding = new Padding(16);
         AddRows(content, TextLabel(L("Prueba el panel sin publicar en Discord.", "Try the dashboard without publishing to Discord."), 12, true));
-        foreach (var (key, label) in new[] { ("job", L("Entrega", "Delivery")), ("pause", L("Pausa", "Paused")),
+        foreach (var (key, label) in new[] { ("job", L("Entrega", "Delivery")), ("coach", L("Ruta de pasajeros", "Passenger route")), ("pause", L("Pausa", "Paused")),
             ("roam", L("Conducción libre en España", "Free driving in Spain")), ("offline", L("Desconexión", "Disconnected")) })
             AddAction(content, label, () => { demoScenario = key; RefreshPresence(); window.Close(); });
         AddAction(content, L("Salir de la prueba", "Exit test"), () => { demoScenario = null; demo = false; RefreshPresence(); window.Close(); });

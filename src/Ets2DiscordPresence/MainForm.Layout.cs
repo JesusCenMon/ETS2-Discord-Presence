@@ -12,13 +12,19 @@ internal sealed partial class MainForm
 
     private readonly Label gameStatus = TextLabel("ETS2 · Buscando…", 10);
     private readonly Label discordStatus = TextLabel("Discord · Buscando…", 10);
+    private Label? destinationCaption;
     private readonly Label travelMode = TextLabel("SIN VIAJE ACTIVO", 10, true);
     private readonly Label cargo = TextLabel("Esperando una partida", 21, true);
-    private readonly Label origin = TextLabel("—", 13, true);
-    private readonly Label destination = TextLabel("—", 13, true);
+    private readonly Label origin = TextLabel("—", 12);
+    private readonly Label destination = TextLabel("—", 17, true);
     private readonly Label cityLabel = TextLabel("Ubicación aproximada · No disponible", 10);
     private readonly Label distance = TextLabel("—", 23, true);
+    private readonly Label distanceUnit = TextLabel("", 10);
     private readonly Label arrival = TextLabel("—", 15, true);
+    private readonly Label arrivalNotice = TextLabel("", 9);
+    private readonly Label driveTime = TextLabel("", 11, true);
+    private readonly Label stoppedTime = TextLabel("", 11, true);
+    private readonly FlowLayoutPanel tripTimes = ToolBar();
     private readonly Label progressCaption = TextLabel("", 10);
     private readonly Label details = TextLabel("Sin actividad para publicar", 12, true);
     private readonly Label state = TextLabel("", 10);
@@ -48,7 +54,12 @@ internal sealed partial class MainForm
     {
         var header = Grid(1);
         header.Padding = new Padding(24, 16, 24, 8);
-        AddRows(header, UiLabel("Viaje", "Trip", 23, true));
+        var headerTitle = UiLabel("Viaje", "Trip", 23, true);
+        var tripHeading = Grid(2);
+        tripHeading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        tripHeading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        tripHeading.Controls.Add(headerTitle, 0, 0);
+        AddRows(header, tripHeading);
         var tripPage = new Panel { Dock = DockStyle.Fill };
         tripPage.Controls.Add(scroll);
         tripPage.Controls.Add(header);
@@ -69,27 +80,57 @@ internal sealed partial class MainForm
         route.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
         route.Margin = new Padding(0, 12, 0, 8);
         route.Controls.Add(Metric("ORIGEN", "ORIGIN", origin), 0, 0);
-        var arrow = TextLabel("→", 13, true);
-        arrow.TextAlign = ContentAlignment.MiddleCenter;
-        route.Controls.Add(arrow, 1, 0);
-        route.Controls.Add(Metric("DESTINO", "DESTINATION", destination), 2, 0);
+        var connector = new Panel { Dock = DockStyle.Fill, Margin = new Padding(1), TabStop = false };
+        connector.Paint += (_, e) =>
+        {
+            if (connector.Width < 10) return;
+            var y = connector.Height / 2;
+            using var stroke = new Pen(shellPalette.Accent, 1.5f);
+            using var dot = new SolidBrush(shellPalette.Accent);
+            e.Graphics.DrawLine(stroke, 3, y, connector.Width - 4, y);
+            e.Graphics.FillEllipse(dot, 1, y - 2, 5, 5);
+            e.Graphics.FillEllipse(dot, connector.Width - 6, y - 2, 5, 5);
+        };
+        route.Controls.Add(connector, 1, 0);
+        var endMetric = Grid(1);
+        destinationCaption = TextLabel("", 9, true);
+        AddRows(endMetric, destinationCaption, destination);
+        route.Controls.Add(endMetric, 2, 0);
         AddRows(travel, route, cityLabel);
 
         metrics.Margin = new Padding(0, 13, 0, 0);
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        metrics.Controls.Add(Metric("DISTANCIA RESTANTE", "REMAINING DISTANCE", distance), 0, 0);
-        metrics.Controls.Add(Metric("LLEGADA · HORA DEL JUEGO", "ARRIVAL · GAME TIME", arrival), 1, 0);
-        AddRows(travel, metrics);
+        var distanceValue = ToolBar();
+        distanceValue.Controls.AddRange([distance, distanceUnit]);
+        distanceUnit.Margin = new Padding(5, 14, 0, 0);
+        metrics.Controls.Add(Metric("DISTANCIA RESTANTE", "REMAINING DISTANCE", distanceValue), 0, 0);
+        var arrivalMetric = Metric("LLEGADA · HORA DEL JUEGO", "ARRIVAL · GAME TIME", arrival);
+        AddRows(arrivalMetric, arrivalNotice);
+        metrics.Controls.Add(arrivalMetric, 1, 0);
         progressArea.Margin = new Padding(0, 8, 0, 0);
         AddRows(progressArea, progressCaption, progress);
-        AddRows(travel, progressArea, deadlineAlert);
+        tripTimes.Controls.AddRange([driveTime, stoppedTime]);
+        driveTime.Margin = new Padding(0, 4, 16, 4);
+        AddRows(travel, progressArea, metrics, tripStatus, tripTimes, deadlineAlert);
         var truckCard = Grid(1);
         truckCard.BackColor = Background;
         truckCard.Padding = new Padding(9, 5, 9, 6);
         truckCard.Margin = new Padding(0, 8, 0, 0);
         fuelStatus.ForeColor = Foreground;
-        AddRows(truckCard, truckName, truckStats, fuelStatus);
+        var vehicleTitle = ToolBar();
+        vehicleTitle.Controls.AddRange([vehicleMark, truckName]);
+        var vehicleDetails = MakeButton(L("Detalles del vehículo", "Vehicle details"));
+        vehicleDetails.Anchor = AnchorStyles.Left;
+        var expanded = false;
+        truckStats.Visible = false;
+        vehicleDetails.Click += (_, _) =>
+        {
+            expanded = !expanded;
+            truckStats.Visible = expanded;
+            vehicleDetails.Text = expanded ? L("Ocultar detalles", "Hide details") : L("Detalles del vehículo", "Vehicle details");
+        };
+        AddRows(truckCard, vehicleTitle, fuelLevel, fuelStatus, vehicleDetails, truckStats);
         AddRows(travel, truckCard, driveSummary);
 
         preview.BackColor = Surface;
@@ -98,7 +139,7 @@ internal sealed partial class MainForm
         var previewTitle = UiLabel("VISTA PREVIA EN DISCORD", "DISCORD PREVIEW", 9, true);
         previewTitle.ForeColor = Accent;
         ConfigurePreviewArt();
-        AddRows(preview, previewTitle, previewName, details, state, previewArt, previewMetadata);
+        AddRows(preview, previewTitle, previewArt, previewName, details, state, previewMetadata);
 
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -138,10 +179,11 @@ internal sealed partial class MainForm
         var guide = menu.Items.Add("", null, (_, _) => SavePreferences(preferences with { GuideDismissed = true }));
         var update = menu.Items.Add("", null, (_, _) => ShowUpdate());
         var rollback = menu.Items.Add("", null, (_, _) => RollBackUpdate());
-        more.Text = L("Más opciones", "More options");
+        more.Text = "⋯";
+        more.AccessibleName = L("Más opciones", "More options");
         more.DropDownOpening += (_, _) =>
         {
-            more.Text = L("Más opciones", "More options");
+            more.AccessibleName = L("Más opciones", "More options");
             obs.Text = L("Tarjeta OBS", "OBS card");
             privacy.Text = L("Privacidad y silencio…", "Privacy and mute…");
             profiles.Text = L("Perfil de interfaz", "Dashboard profile");
@@ -169,8 +211,21 @@ internal sealed partial class MainForm
         locate.Visible = false;
 
         AddRows(mapSection, tripMap, MapControls(tripMap, translate: true));
-        AddRows(header, actions);
+        tripHeading.Controls.Add(actions, 1, 0);
+        void ArrangeHeading()
+        {
+            var wrap = tripPage.ClientSize.Width < (760 * Math.Max(100, preferences.TextPercent) / 100);
+            var cell = new TableLayoutPanelCellPosition(wrap ? 0 : 1, wrap ? 1 : 0);
+            if (tripHeading.GetCellPosition(actions) == cell) return;
+            tripHeading.SuspendLayout();
+            tripHeading.SetCellPosition(actions, cell);
+            tripHeading.SetColumnSpan(actions, wrap ? 2 : 1);
+            actions.Margin = wrap ? Padding.Empty : new Padding(24, 4, 0, 0);
+            tripHeading.ResumeLayout();
+        }
+        tripPage.ClientSizeChanged += (_, _) => ArrangeHeading();
         AddDashboardActions(actions);
+        ArrangeHeading();
         AddRows(tripPanel, travel, connections, guidance, onboarding, preview, mapSection, finishBanner);
         panelSections.Add("trip", travel);
         panelSections.Add("discord", preview);
@@ -239,6 +294,16 @@ internal sealed partial class MainForm
         var previewWidth = previewAtSide ? (int)(width * .33) - side.Margin.Horizontal : width;
         if (!narrow && hasSide) width = (int)(width * .67);
         if (!previewAtSide) previewWidth = width;
+        var routeWidth = Math.Max(150, width - travel.Padding.Horizontal - 8);
+        LimitPanelWidth(travel, width);
+        LimitPanelWidth(preview, previewWidth);
+        LimitPanelWidth(route, routeWidth);
+        LimitPanelWidth(metrics, routeWidth);
+        SetColumnWidth(route.ColumnStyles[0], (int)(routeWidth * .43));
+        SetColumnWidth(route.ColumnStyles[1], (int)(routeWidth * .10));
+        SetColumnWidth(route.ColumnStyles[2], (int)(routeWidth * .46));
+        SetColumnWidth(metrics.ColumnStyles[0], routeWidth / 2);
+        SetColumnWidth(metrics.ColumnStyles[1], routeWidth - routeWidth / 2);
         SetWrap(cargo, width - travel.Padding.Horizontal);
         SetWrap(cityLabel, width - travel.Padding.Horizontal);
         SetWrap(origin, (int)((width - travel.Padding.Horizontal) * .45));
@@ -246,6 +311,7 @@ internal sealed partial class MainForm
         SetWrap(state, previewWidth - preview.Padding.Horizontal);
         SetWrap(details, previewWidth - preview.Padding.Horizontal);
         SetWrap(driveSummary, width - travel.Padding.Horizontal);
+        SetWrap(tripStatus, width - travel.Padding.Horizontal);
         SetWrap(guidance, width);
         SetWrap(onboarding, width);
         SetWrap(timeline, width - travel.Padding.Horizontal);
@@ -263,9 +329,21 @@ internal sealed partial class MainForm
         if (label.MaximumSize != maximum) label.MaximumSize = maximum;
     }
 
+    private static void LimitPanelWidth(Control panel, int width)
+    {
+        var maximum = new Size(Math.Max(80, width), 0);
+        if (panel.MaximumSize != maximum) panel.MaximumSize = maximum;
+    }
+
+    private static void SetColumnWidth(ColumnStyle column, int width)
+    {
+        if (column.SizeType != SizeType.Absolute) column.SizeType = SizeType.Absolute;
+        if (Math.Abs(column.Width - width) > .5f) column.Width = width;
+    }
+
     private void ApplyCompactSize()
     {
-        if (preferences.Compact) Navigate("trip");
+        if (preferences.Compact) Navigate("trip", remember: false);
         var scale = DeviceDpi / 96f;
         ClientSize = preferences.Compact
             ? new Size((int)(465 * scale), (int)(450 * scale))
@@ -276,9 +354,11 @@ internal sealed partial class MainForm
     private void RenderTrip(TelemetrySnapshot? trip, string? nearby, PresenceText? presence)
     {
         travelMode.Text = trip is null ? L("SIN VIAJE ACTIVO", "NO ACTIVE TRIP") : trip.Paused ? L("JUEGO EN PAUSA", "GAME PAUSED")
+            : trip.Coach ? trip.OnJob ? L("RUTA DE PASAJEROS", "PASSENGER ROUTE") : L("AUTOBÚS · CONDUCCIÓN LIBRE", "COACH · FREE DRIVE")
             : trip.OnJob ? L("ENTREGA EN CURSO", "DELIVERY IN PROGRESS") : L("CONDUCCIÓN LIBRE", "FREE ROAM");
         travelMode.ForeColor = trip is null || trip.Paused ? shellPalette.Text : shellPalette.Accent;
         cargo.Text = trip is null ? L("Esperando una partida", "Waiting for a game session")
+            : trip.Coach ? trip.OnJob ? L("Servicio de autobús", "Coach service") : L("Explorando en autobús", "Exploring by coach")
             : trip.OnJob ? (string.IsNullOrWhiteSpace(trip.Cargo) ? L("Entrega sin nombre de carga", "Delivery without cargo name") : trip.Cargo)
             : L("Explorando el mapa", "Exploring the map");
         cargo.Visible = preferences.HiddenPanels?.Contains("cargo") != true;
@@ -287,13 +367,25 @@ internal sealed partial class MainForm
         metrics.Visible = (trip?.OnJob == true || trip?.RemainingKm is not null)
             && preferences.HiddenPanels?.Contains("metrics") != true;
         origin.Text = string.IsNullOrWhiteSpace(trip?.SourceCity) ? "—" : trip.SourceCity;
+        if (destinationCaption is not null)
+            destinationCaption.Text = trip?.Coach == true ? L("DESTINO DE PASAJEROS", "PASSENGER DESTINATION") : L("DESTINO", "DESTINATION");
         destination.Text = string.IsNullOrWhiteSpace(trip?.DestinationCity) ? "—" : trip.DestinationCity;
-        cityLabel.Text = nearby is null ? L("Ubicación aproximada · No disponible", "Approximate location · Unavailable") : L($"Ubicación aproximada · Cerca de {nearby}", $"Approximate location · Near {nearby}");
-        distance.Text = trip?.RemainingKm is { } km ? AppOptions.Distance(km, preferences.Features.Miles) : "—";
+        destination.AccessibleDescription = destination.Text == "—" ? L("Destino sin datos", "Destination unavailable") : null;
+        var countryName = Countries.Name(demoScenario == "roam" ? "ES" : demo || demoScenario is not null ? "FR" : currentCountry, English);
+        var cityAndCountry = new[] { countryName, nearby is null ? null : L($"Cerca de {nearby}", $"Near {nearby}") }.OfType<string>().ToArray();
+        cityLabel.Text = cityAndCountry.Length == 0 ? L("Ubicación aproximada · No disponible", "Approximate location · Unavailable")
+            : string.Join("  ·  ", cityAndCountry);
+        distance.Text = trip?.RemainingKm is { } km ? $"{(preferences.Features.Miles ? km / 1.609344 : km):N0}" : "—";
+        distanceUnit.Text = trip?.RemainingKm is null ? "" : preferences.Features.Miles ? "mi" : "km";
         arrival.Text = trip?.ArrivalTime is { } eta && preferences.Features.Clock12
             && DateTime.TryParseExact(eta, "HH:mm", System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.None, out var clock)
                 ? clock.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture) : trip?.ArrivalTime ?? "—";
+        distance.AccessibleDescription = distance.Text == "—" ? L("Distancia sin datos", "Distance unavailable") : null;
+        arrivalNotice.Text = trip is { OnJob: true, ArrivalTime: null }
+            ? L("ETS2 aún no da una hora de llegada.", "ETS2 has not provided an arrival time.") : "";
+        arrivalNotice.Visible = arrivalNotice.Text.Length > 0;
+        arrival.AccessibleDescription = arrival.Text == "—" ? L("Hora estimada sin datos", "Estimated arrival unavailable") : null;
         var percent = trip?.Progress;
         progressArea.Visible = percent.HasValue && preferences.HiddenPanels?.Contains("metrics") != true;
         progress.Value = percent ?? 0;
@@ -304,7 +396,7 @@ internal sealed partial class MainForm
             : L("El viaje se sigue mostrando en el panel.", "The trip is still visible on the dashboard.");
     }
 
-    private TableLayoutPanel Metric(string caption, string translation, Label value)
+    private TableLayoutPanel Metric(string caption, string translation, Control value)
     {
         var metric = Grid(1);
         AddRows(metric, UiLabel(caption, translation, 9, true), value);
@@ -349,7 +441,10 @@ internal sealed partial class MainForm
             FlatStyle = FlatStyle.Flat
         };
         button.FlatAppearance.BorderSize = 1;
+        button.MinimumSize = new Size(36, 32);
         if (isLight) button.FlatAppearance.BorderColor = SystemColors.ControlDark;
+        button.Enter += (_, _) => { button.FlatAppearance.BorderColor = SystemColors.HotTrack; };
+        button.Leave += (_, _) => { button.FlatAppearance.BorderColor = isLight ? SystemColors.ControlDark : SystemColors.ControlDarkDark; };
         return button;
     }
 

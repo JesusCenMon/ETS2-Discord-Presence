@@ -3,18 +3,39 @@ namespace Ets2DiscordPresence;
 internal static class DiscordIdentity
 {
     internal const string ActivityName = "Euro Truck Simulator 2";
-    internal const string AssetsTag = "v0.7.2";
-    private const string ArtRoot = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/" + AssetsTag + "/assets/";
-    internal const string ActivityImage = ArtRoot + "hero-truck.png";
-    private static readonly Lazy<IReadOnlyDictionary<string, string>> CountryImages = new(LoadCountryImages);
+    internal const string AssetsTag = "v0.8.1";
+    internal const string ActivityImage = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/d068a4f120338d998ac4ec42dcf9e2708ca92762/assets/discord/truck.jpg";
+    private const string CoachArtworkRoot = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/d068a4f120338d998ac4ec42dcf9e2708ca92762/assets/discord/coaches/";
+    private static readonly Lazy<IReadOnlyDictionary<string, string>> SpanishImages = new(() => LoadCountryImages("country_art.json"));
+    private static readonly Lazy<IReadOnlyDictionary<string, string>> EnglishImages = new(() => LoadCountryImages("country_art_en.json"));
 
-    internal static string ImageFor(string? country) =>
-        country is not null && CountryImages.Value.TryGetValue(country, out var image) ? image : ActivityImage;
-
-    private static IReadOnlyDictionary<string, string> LoadCountryImages()
+    internal static string ImageFor(string? country, bool releaseArtwork = true, bool english = false, bool coach = false)
     {
-        using var file = AppResources.Open("country_art.json");
+        var images = english ? EnglishImages : SpanishImages;
+        if (country is not null && images.Value.TryGetValue(country, out var image))
+            return coach ? CoachArtworkRoot + Path.GetFileName(image) : image;
+        if (coach) return CoachArtworkRoot + "coach.jpg";
+        return ActivityImage;
+    }
+
+    private static IReadOnlyDictionary<string, string> LoadCountryImages(string resource)
+    {
+        using var file = AppResources.Open(resource);
         return ReadCountryImages(file);
+    }
+
+    internal static string? CountryArtworkResource(string? image)
+    {
+        if (image is null) return null;
+        var file = Path.GetFileName(image);
+        if (image == ActivityImage) return "truck-art.jpg";
+        if (image == CoachArtworkRoot + "coach.jpg") return "coach-art.coach.jpg";
+        if (file.Length != 9 || !file.EndsWith(".jpg", StringComparison.Ordinal) || file[2] != '-'
+            || Countries.Normalize(file[..2]) is not { } code) return null;
+        var images = file[3..5] switch { "es" => SpanishImages, "en" => EnglishImages, _ => null };
+        if (images?.Value.TryGetValue(code, out var published) != true) return null;
+        if (published == image) return $"country-art.{file}";
+        return image == CoachArtworkRoot + file ? $"coach-art.{file}" : null;
     }
 
     internal static IReadOnlyDictionary<string, string> ReadCountryImages(Stream file)
@@ -32,6 +53,5 @@ internal static class DiscordIdentity
         return images;
     }
 
-    internal static string ActivityBadge(string state) => ArtRoot + $"discord/{state}.png";
     internal const string ApplicationId = "1568840287428808846";
 }

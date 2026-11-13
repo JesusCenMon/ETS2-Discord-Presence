@@ -12,22 +12,35 @@ internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bo
     string? CityCatalog = null, string Profile = "custom", string[]? PresenceOrder = null,
     string[]? PanelOrder = null, string[]? HiddenPanels = null,
     string DriverProfile = "", string[]? Drivers = null, int TextPercent = 100, int RetentionDays = 0,
-    int FuelThreshold = 0, int PrivacyShortcut = 0, bool ActivityImage = true, bool ActivityTimer = true, bool ShowArtwork = false, AppOptions? Options = null, bool PreviewUpdates = false)
+    int FuelThreshold = 0, int PrivacyShortcut = 0, bool ActivityImage = true, bool ActivityTimer = true, bool ShowArtwork = false, AppOptions? Options = null, bool PreviewUpdates = false, bool? ShowCountry = null)
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public AppOptions Features => Options ?? new();
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool SharesCountry => ShowCountry ?? ShowCity;
+
     private static string SettingsPath => Path.Combine(LocalData.Folder, "settings.json");
+
+    public static bool RecoveredSettings { get; private set; }
 
     public static AppSettings Load()
     {
+        RecoveredSettings = false;
+        if (Read(SettingsPath) is { } primary) return primary;
+        if (!File.Exists(SettingsPath) || Read(SettingsPath + ".previous") is not { } previous) return new();
+        RecoveredSettings = true;
+        return previous;
+    }
+
+    private static AppSettings? Read(string path)
+    {
         try
         {
-            return File.Exists(SettingsPath)
-                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath)) is { DriverProfile: not null } saved ? saved with { DriverProfile = saved.DriverProfile.Trim() } : new("")
-                : new("");
+            return File.Exists(path) && JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path)) is { DriverProfile: not null } saved
+                ? saved with { DriverProfile = saved.DriverProfile.Trim() } : null;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(""); }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return null; }
     }
 
     public void Save()
@@ -37,7 +50,9 @@ internal sealed record AppSettings(string GamePath = "", bool Sharing = true, bo
         try
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(temporary, SettingsPath, overwrite: true);
+            if (Read(SettingsPath) is not null)
+                File.Replace(temporary, SettingsPath, SettingsPath + ".previous");
+            else File.Move(temporary, SettingsPath, overwrite: true);
         }
         finally
         {
@@ -78,19 +93,20 @@ internal static class PluginInstaller
 {
     internal const string BundledVersion = "1.12.1";
     private const string InstalledName = "ets2-discord-telemetry.dll";
+    private const string CoachName = "ets2-discord-coaches.dll";
+    private const string CoachResource = "coach-telemetry.dll";
 
     public static void Maintain(string gamePath, bool remove)
     {
         if (!SteamLocator.IsValidGamePath(gamePath)) throw new IOException("ETS2 no está localizado.");
         var destination = Path.Combine(gamePath, "bin", "win_x64", "plugins", InstalledName);
+        var coach = Path.Combine(Path.GetDirectoryName(destination)!, CoachName);
         if (remove)
         {
-            using var source = AppResources.Open("rencloud-telemetry.dll");
-            if (!File.Exists(destination)) return;
-            using (var installed = File.OpenRead(destination))
-                if (!SHA256.HashData(installed).AsSpan().SequenceEqual(SHA256.HashData(source)))
-                    throw new IOException("El archivo cambió. Revísalo manualmente para conservar complementos ajenos.");
-            File.Delete(destination);
+            VerifyOwned(destination, "rencloud-telemetry.dll");
+            VerifyOwned(coach, CoachResource);
+            if (File.Exists(destination)) File.Delete(destination);
+            if (File.Exists(coach)) File.Delete(coach);
             return;
         }
 
@@ -99,12 +115,18 @@ internal static class PluginInstaller
             Prepare(gamePath);
             return;
         }
+        var coachAdded = EnsureCoach(Path.GetDirectoryName(destination)!);
         using var replacement = AppResources.Open("rencloud-telemetry.dll");
         var temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
         try
         {
             using (var output = new FileStream(temporary, FileMode.CreateNew)) replacement.CopyTo(output);
             File.Move(temporary, destination, overwrite: true);
+        }
+        catch
+        {
+            if (coachAdded) File.Delete(coach);
+            throw;
         }
         finally { File.Delete(temporary); }
     }
@@ -128,21 +150,58 @@ internal static class PluginInstaller
                 throw new IOException("Hay dos lectores de ETS2. Cierra el juego, conserva solo uno y pulsa Reintentar preparación.");
             compatibleFound = true;
         }
-        if (compatibleFound) return false;
+        if (compatibleFound) return EnsureCoach(directory);
 
         Directory.CreateDirectory(directory);
         var temporary = Path.Combine(directory, $".ets2-presence-{Guid.NewGuid():N}.tmp");
+        var installed = false;
         try
         {
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
                 source.CopyTo(output);
             File.Move(temporary, destination);
+            installed = true;
+            EnsureCoach(directory);
             return true;
+        }
+        catch
+        {
+            if (installed) File.Delete(destination);
+            throw;
         }
         finally
         {
             File.Delete(temporary);
         }
+    }
+
+    private static void VerifyOwned(string path, string resource)
+    {
+        if (!File.Exists(path)) return;
+        using var installed = File.OpenRead(path);
+        using var embedded = AppResources.Open(resource);
+        if (!SHA256.HashData(installed).AsSpan().SequenceEqual(SHA256.HashData(embedded)))
+            throw new IOException($"El complemento {Path.GetFileName(path)} cambió. Revísalo antes de continuar.");
+    }
+
+    private static bool EnsureCoach(string directory)
+    {
+        var target = Path.Combine(directory, CoachName);
+        if (File.Exists(target))
+        {
+            VerifyOwned(target, CoachResource);
+            return false;
+        }
+        var temporary = Path.Combine(directory, $".ets2-coaches-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+            using (var embedded = AppResources.Open(CoachResource))
+                embedded.CopyTo(output);
+            File.Move(temporary, target);
+            return true;
+        }
+        finally { File.Delete(temporary); }
     }
 }
 

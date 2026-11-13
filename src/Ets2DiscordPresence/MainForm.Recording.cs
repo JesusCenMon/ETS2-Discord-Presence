@@ -13,8 +13,14 @@ internal sealed partial class MainForm
     private long storedBytes;
     private bool markerHotkeyRegistered;
 
-    private static string? JobId(TelemetrySnapshot? snapshot) => snapshot is { OnJob: true, Signals: { } signals }
-        ? $"{signals.Deadline}|{signals.JobKey}|{snapshot.SourceCity}|{snapshot.DestinationCity}" : null;
+    private static string? JobId(TelemetrySnapshot? snapshot) => snapshot switch
+    {
+        { OnJob: true, Coach: true, DestinationCity.Length: > 0 } =>
+            $"coach|{snapshot.SourceCity}|{snapshot.DestinationCity}|{snapshot.Signals?.DestinationId}",
+        { OnJob: true, Coach: false, Signals: { } signals } =>
+            $"{signals.Deadline}|{signals.JobKey}|{snapshot.SourceCity}|{snapshot.DestinationCity}",
+        _ => null
+    };
 
     private bool StartRecording(bool automatic, long now, string? job)
     {
@@ -69,7 +75,9 @@ internal sealed partial class MainForm
         return bytes < capacity;
     }
 
-    private void FinishRecording()
+    private enum RecordingFinish { Saved, Empty, Recoverable, Failed }
+
+    private RecordingFinish FinishRecording()
     {
         var path = recordingPath;
         var empty = recordingFrames == 0;
@@ -77,10 +85,18 @@ internal sealed partial class MainForm
         {
             recording?.Dispose();
             if (empty && path is not null) File.Delete(path);
+            else if (path is not null)
+            {
+                var saved = TelemetryReplay.ReadDetailed(path);
+                if (saved.RecoveredTail) return RecordingFinish.Recoverable;
+                TelemetryReplay.Save(path, saved.Frames, saved.Metadata?.Created);
+            }
+            return empty || path is null ? RecordingFinish.Empty : RecordingFinish.Saved;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
         {
             settingsError = L("No se pudo cerrar la grabación correctamente.", "The recording could not be closed cleanly.");
+            return path is not null && File.Exists(path) ? RecordingFinish.Recoverable : RecordingFinish.Failed;
         }
         finally
         {
@@ -106,9 +122,16 @@ internal sealed partial class MainForm
             if (!StartRecording(automatic: true, now, job)) manualStopJob = job;
         }
         if (recording is null) return;
-        if (!recordingPaused && (snapshot is not null || recordingFrames > 0))
-            AppendFrame(snapshot, now);
-        if (ending is not null && recordedJob is not null && recordingPath is { } path && recordingFrames > 0)
+        var nextCoachRoute = ending?.JourneyType == "coach" && job != recordedJob;
+        if (!recordingPaused && !nextCoachRoute && (snapshot is not null || recordingFrames > 0))
+        {
+            AppendFrame(snapshot, now, eventKind: routeRecalculated ? "route_changed" : null);
+            if (journal.BoundaryCountry is { } border && recording is not null)
+                AppendFrame(snapshot, now, eventKind: $"border:{border}");
+        }
+        if (ending is not null && recordedJob is { } activeJob
+            && activeJob.StartsWith("coach|", StringComparison.Ordinal) == (ending.JourneyType == "coach")
+            && recordingPath is { } path && recordingFrames > 0)
         {
             journal.AttachRecording(ending.Id, Path.GetFileName(path));
             if (recordingAuto) FinishRecording();
@@ -120,7 +143,7 @@ internal sealed partial class MainForm
         }
     }
 
-    private void AppendFrame(TelemetrySnapshot? snapshot, long now, string? marker = null)
+    private void AppendFrame(TelemetrySnapshot? snapshot, long now, string? marker = null, string? eventKind = null)
     {
         if (recording is null) return;
         try
@@ -133,7 +156,7 @@ internal sealed partial class MainForm
                 settingsError = L("La grabación se cerró al alcanzar su límite.", "Recording stopped at its limit.");
                 return;
             }
-            TelemetryReplay.Write(recording, new RecordedFrame(now - recordingStarted, snapshot, marker));
+            TelemetryReplay.Write(recording, new RecordedFrame(now - recordingStarted, snapshot, marker, eventKind));
             recordingFrames++;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -167,12 +190,18 @@ internal sealed partial class MainForm
         try
         {
             if (!Path.IsPathFullyQualified(folder)) return;
-            var path = Path.Combine(folder, "ETS2-automatico.ets2backup");
             var interval = Math.Clamp(preferences.Features.BackupIntervalDays, 1, 30);
-            if (File.Exists(path) && File.GetLastWriteTimeUtc(path) > DateTime.UtcNow.AddDays(-interval)) return;
+            var existing = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "ETS2-automatico*.ets2backup")
+                .Where(path => Path.GetFileName(path) == "ETS2-automatico.ets2backup" ||
+                    System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), @"^ETS2-automatico-\d{8}-\d{6}\.ets2backup$"))
+                .OrderByDescending(File.GetLastWriteTimeUtc).ToArray() : [];
+            if (existing.Length > 0 && File.GetLastWriteTimeUtc(existing[0]) > DateTime.UtcNow.AddDays(-interval)) return;
             journal.Flush();
             if (journal.Error is not null) return;
-            LocalData.Backup(path);
+            var path = Path.Combine(folder, $"ETS2-automatico-{DateTime.UtcNow:yyyyMMdd-HHmmss}.ets2backup");
+            SaveBackup(path);
+            foreach (var old in existing.Skip(Math.Clamp(preferences.Features.BackupKeep, 5, 20) - 1))
+                File.Delete(old);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)
         {

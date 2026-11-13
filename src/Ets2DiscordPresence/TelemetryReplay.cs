@@ -3,14 +3,16 @@ using System.IO.Compression;
 
 namespace Ets2DiscordPresence;
 
-internal sealed record RecordedFrame(long ElapsedMs, TelemetrySnapshot? Trip, string? Marker = null);
+internal sealed record RecordedFrame(long ElapsedMs, TelemetrySnapshot? Trip, string? Marker = null, string? Event = null, string? Note = null);
 
 internal static class TelemetryReplay
 {
     internal const int MaximumFrames = 35_000;
     internal const long MaximumBytes = 30_000_000;
 
-    internal sealed record RecordingMetadata(int SchemaVersion, string AppVersion, DateTimeOffset Created);
+    internal sealed record RecordingMetadata(int SchemaVersion, string AppVersion, DateTimeOffset Created,
+        DateTimeOffset? StartedAt = null, long? Duration = null, string? Origin = null, string? Destination = null,
+        string? Truck = null, int? FrameCount = null, int? MarkersCount = null, string[]? MarkerTitles = null, string? JourneyType = null);
     internal sealed record RecordingRead(List<RecordedFrame> Frames, bool RecoveredTail, RecordingMetadata? Metadata);
 
     public static List<RecordedFrame> Read(string path) => ReadDetailed(path).Frames;
@@ -38,6 +40,22 @@ internal static class TelemetryReplay
         return Parse(content);
     }
 
+    public static RecordingMetadata? ReadHeader(string path)
+    {
+        using var file = File.OpenRead(path);
+        using var stream = path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
+            ? (Stream)new GZipStream(file, CompressionMode.Decompress) : file;
+        using var input = new StreamReader(stream);
+        var header = new char[8192];
+        var count = 0;
+        while (count < header.Length && input.Read() is var character && character >= 0 && character != '\n')
+            header[count++] = (char)character;
+        if (count == 0 || count == header.Length) return null;
+        using var parsed = JsonDocument.Parse(new string(header, 0, count));
+        return parsed.RootElement.TryGetProperty("SchemaVersion", out _)
+            ? parsed.RootElement.Deserialize<RecordingMetadata>() : null;
+    }
+
     private static RecordingRead Parse(Stream file)
     {
         file.Seek(-1, SeekOrigin.End);
@@ -58,7 +76,7 @@ internal static class TelemetryReplay
                 if (item.TryGetProperty("SchemaVersion", out _))
                 {
                     if (metadata is not null || frames.Count > 0
-                        || item.Deserialize<RecordingMetadata>() is not { SchemaVersion: 1 } header
+                        || item.Deserialize<RecordingMetadata>() is not { SchemaVersion: 1 or 2 } header
                         || !Version.TryParse(header.AppVersion, out _) || header.Created == default)
                         throw new InvalidDataException("Unsupported recording schema.");
                     metadata = header;
@@ -116,6 +134,7 @@ internal static class TelemetryReplay
         foreach (var frame in frames)
         {
             if (!string.IsNullOrWhiteSpace(frame.Marker)) yield return (frame.ElapsedMs, frame.Marker);
+            if (!string.IsNullOrEmpty(frame.Event)) yield return (frame.ElapsedMs, frame.Event);
             foreach (var kind in DetectEvents(frame.Trip, previous)) yield return (frame.ElapsedMs, kind);
             previous = frame.Trip;
         }
@@ -135,8 +154,20 @@ internal static class TelemetryReplay
         if (signals.FinishedAt != 0 && signals.Delivered != old.Delivered) yield return "delivery";
     }
 
-    public static void Save(string path, IEnumerable<RecordedFrame> frames)
+    public static void Save(string path, IEnumerable<RecordedFrame> frames, DateTimeOffset? startedAt = null)
     {
+        var samples = frames as IReadOnlyList<RecordedFrame> ?? frames.ToArray();
+        if (samples.Count is 0 or > MaximumFrames) throw new InvalidDataException("Invalid recording length.");
+        var trip = samples.Select(frame => frame.Trip).FirstOrDefault(sample => sample?.OnJob == true);
+        var truck = samples.Select(frame => frame.Trip?.Truck).FirstOrDefault(value => value is not null);
+        var kind = trip is not null ? (trip.Coach ? "coach" : "delivery")
+            : samples.Any(frame => frame.Trip is not null) ? "free" : null;
+        var metadata = new RecordingMetadata(2, DesktopServices.Version.ToString(3), DateTimeOffset.UtcNow,
+            startedAt, samples[^1].ElapsedMs, trip?.SourceCity, trip?.DestinationCity,
+            truck is null ? null : $"{truck.Brand} {truck.Model}".Trim(), samples.Count,
+            samples.Count(frame => !string.IsNullOrWhiteSpace(frame.Marker)),
+            samples.Select(frame => frame.Marker).OfType<string>().Where(title => title.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(24).Select(title => title[..Math.Min(title.Length, 50)]).ToArray(), kind);
         var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
@@ -144,8 +175,8 @@ internal static class TelemetryReplay
             using (var writer = new StreamWriter(path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase)
                 ? new GZipStream(output, CompressionLevel.Optimal) : output))
             {
-                WriteHeader(writer);
-                foreach (var frame in frames) writer.WriteLine(JsonSerializer.Serialize(frame));
+                writer.WriteLine(JsonSerializer.Serialize(metadata));
+                foreach (var frame in samples) writer.WriteLine(JsonSerializer.Serialize(frame));
             }
             File.Move(temporary, path, overwrite: true);
         }

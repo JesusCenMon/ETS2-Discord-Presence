@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ETS2DiscordPresence</AssemblyName>
-    <Version>0.7.2</Version>
+    <Version>0.8.1</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>../../assets/ets2-presence.ico</ApplicationIcon>
   </PropertyGroup>
@@ -14,13 +14,18 @@
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
     <EmbeddedResource Include="../../data/cities_default.json" LogicalName="cities_default.json" />
     <EmbeddedResource Include="../../data/country_art.json" LogicalName="country_art.json" />
+    <EmbeddedResource Include="../../data/country_art_en.json" LogicalName="country_art_en.json" />
     <EmbeddedResource Include="../../assets/hero-truck.png" LogicalName="hero-truck.png" />
     <!-- Fluent UI System Icons, 24 px Filled, from microsoft/fluentui-system-icons @ e15fc0de25fab983e3e42bac8798be69a85c23bf. -->
     <EmbeddedResource Include="../../assets/fluent/*.png" LogicalName="fluent.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../assets/fluent/LICENSE.txt" LogicalName="FLUENT-LICENSE.txt" />
-    <EmbeddedResource Include="../../assets/discord/*.png" LogicalName="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../assets/discord/countries/*.jpg" LogicalName="country-art.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../assets/discord/coaches/*.jpg" LogicalName="coach-art.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../assets/discord/truck.jpg" LogicalName="truck-art.jpg" />
     <EmbeddedResource Include="../../assets/ets2-presence.ico" LogicalName="ets2-presence.ico" />
     <EmbeddedResource Include="../../assets/rencloud-telemetry.dll" LogicalName="rencloud-telemetry.dll" />
+    <EmbeddedResource Include="../../assets/coach-telemetry.dll" LogicalName="coach-telemetry.dll" />
+    <EmbeddedResource Include="../../native/coach-telemetry/sdk/LICENSE.txt" LogicalName="SCS-SDK-LICENSE.txt" />
     <EmbeddedResource Include="../../assets/RENCLOUD-LICENSE.txt" LogicalName="RENCLOUD-LICENSE.txt" />
     <EmbeddedResource Include="../../data/CITY-DATA-LICENSE.txt" LogicalName="CITY-DATA-LICENSE.txt" />
   </ItemGroup>

@@ -26,7 +26,11 @@ internal sealed partial class MainForm : Form
     private readonly bool startMinimized;
     private readonly ToolStripMenuItem trayPause = new();
     private AppSettings preferences = AppSettings.Load();
+    private readonly string initialTheme;
     private readonly PresencePublication publication = new();
+    private readonly System.Windows.Forms.Timer presenceTimer = new() { Interval = 500 };
+    private PresenceText? pendingPresence;
+    private bool publishImmediately;
     private StreamWriter? recording;
     private long recordingStarted;
     private DateTime? activityStarted;
@@ -55,6 +59,7 @@ internal sealed partial class MainForm : Form
 
     public MainForm(bool startMinimized = false)
     {
+        initialTheme = preferences.Theme;
         this.startMinimized = startMinimized;
         journal = new TripJournal(LocalData.JournalPath(preferences.DriverProfile));
         Text = "ETS2 Discord Presence";
@@ -75,6 +80,17 @@ internal sealed partial class MainForm : Form
         trayMenu.Items.Add("Abrir panel", null, (_, _) => RestoreWindow());
         trayPause.Click += (_, _) => ToggleSharing();
         trayMenu.Items.Add(trayPause);
+        var discordModes = new ToolStripMenuItem("Perfil de Discord");
+        foreach (var (key, spanish, english) in new[] { ("normal", "Normal", "Normal"), ("stream", "Stream", "Stream"), ("private", "Privado", "Private") })
+        {
+            var item = new ToolStripMenuItem(spanish);
+            item.Click += (_, _) => SwitchDiscordProfile(key);
+            trayMenu.Opening += (_, _) => { item.Text = L(spanish, english); item.Checked = preferences.Features.DiscordMode == key; };
+            discordModes.DropDownItems.Add(item);
+        }
+        trayMenu.Opening += (_, _) => discordModes.Text = L("Perfil de Discord", "Discord profile");
+        trayMenu.Items.Add(discordModes);
+        AddGameScreenMenu();
         trayQuick.Click += (_, _) => ShowTrayQuickPanel();
         trayMenu.Items.Add("Licencias", null, (_, _) => ShowLicenses());
         trayMenu.Items.Add("Salir", null, (_, _) => Close());
@@ -93,8 +109,17 @@ internal sealed partial class MainForm : Form
             if (WindowState == FormWindowState.Minimized && Visible) Hide();
             ArrangeLayout();
         };
-        DpiChanged += (_, _) => ArrangeLayout();
+        DpiChanged += (_, _) => { ResizeShell(); ArrangeLayout(); };
         timer.Tick += (_, _) => RefreshPresence();
+        presenceTimer.Tick += (_, _) =>
+        {
+            presenceTimer.Stop();
+            var presence = pendingPresence;
+            pendingPresence = null;
+            if (!discordReady) return;
+            Publish(presence);
+            RenderPreview(lastSent, null);
+        };
         toggle.Click += (_, _) => ToggleSharing();
         locate.Click += (_, _) => LocateGame();
         launch.Click += (_, _) => OpenExternal("steam://rungameid/227300");
@@ -103,14 +128,21 @@ internal sealed partial class MainForm : Form
         ConfigurePanels();
         Restyle(this);
         ScaleText(this);
+        RememberWindow(this, "main");
         Shown += (_, _) => Start();
         FormClosed += (_, _) =>
         {
             lifetime.Cancel();
             timer.Dispose();
+            presenceTimer.Dispose();
+            photoWatcher?.Dispose();
             discord.Dispose();
             tray.Dispose();
             trayMenu.Dispose();
+            var closingDrive = journal.ObserveDrive(null, DateTimeOffset.UtcNow, Environment.TickCount64, false, false);
+            if (closingDrive?.JourneyType == "coach" && recordedJob?.StartsWith("coach|", StringComparison.Ordinal) == true
+                && recordingPath is { } closingPath && recordingFrames > 0)
+                journal.AttachRecording(closingDrive.Id, Path.GetFileName(closingPath));
             journal.Flush();
             overlay?.Dispose();
             FinishRecording();
@@ -124,6 +156,8 @@ internal sealed partial class MainForm : Form
     private async void Start()
     {
         if (startMinimized) Hide();
+        if (AppSettings.RecoveredSettings)
+            settingsError = L("Se recuperó la última copia válida de los ajustes.", "Recovered the last valid copy of your settings.");
         AppUpdater.CleanWorker(Application.ExecutablePath);
         if (AppUpdater.ConsumeFailure(Application.ExecutablePath) is { } failure)
             settingsError = L("La actualización no se pudo completar.", "The update could not be completed.")
@@ -131,26 +165,29 @@ internal sealed partial class MainForm : Form
         discord.OnReady += (_, _) =>
         {
             discordWasReady = true;
+            Interlocked.Exchange(ref lastDiscordConnection, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            lastDiscordError = null;
             Interlocked.Increment(ref connectionGeneration);
             discordReady = true;
         };
         discord.OnPresenceUpdate += (_, message) =>
         {
             var sent = lastSent;
-            discordConfirmed = sent is not null && message.Presence is { } ack
+            discordConfirmed = discordReady && sent is not null && message.Presence is { } ack
                 && ack.Details == sent.Details && ack.State == sent.State;
         };
         discord.OnClose += (_, _) => { discordReady = false; discordConfirmed = false; };
-        discord.OnConnectionFailed += (_, _) => discordReady = false;
+        discord.OnConnectionFailed += (_, _) => { discordReady = false; discordConfirmed = false; lastDiscordError = "connection_failed"; };
         discord.Initialize();
         DiscoverGame();
         RefreshPresence();
         timer.Start();
+        _ = CheckReleaseArtworkAsync();
         if (!retentionChecked)
         {
             retentionChecked = true;
             try { LocalData.PruneRecordings(preferences.RetentionDays, recordingPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
         }
 
         await RefreshUpdateAsync();
@@ -239,12 +276,14 @@ internal sealed partial class MainForm : Form
             updated.Save();
             if (!string.Equals(preferences.DriverProfile, updated.DriverProfile, StringComparison.OrdinalIgnoreCase))
             {
+                journal.ObserveDrive(null, DateTimeOffset.UtcNow, Environment.TickCount64, false, false);
                 journal.Flush();
                 journal = new TripJournal(LocalData.JournalPath(updated.DriverProfile));
                 completedTrip = null;
             }
             var themeChanged = preferences.Theme != updated.Theme;
             var channelChanged = preferences.PreviewUpdates != updated.PreviewUpdates;
+            publishImmediately = true;
             preferences = updated;
             if (channelChanged)
             {
@@ -256,9 +295,27 @@ internal sealed partial class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            settingsError = L("Windows no permitió guardar tus preferencias.", "Windows did not allow saving your settings.");
+            if (!updated.Sharing && preferences.Sharing)
+            {
+                preferences = preferences with { Sharing = false };
+                publishImmediately = true;
+                settingsError = L("Publicación pausada. Windows impidió guardar la pausa para el próximo inicio.",
+                    "Publishing paused. Windows could not save the pause for next startup.");
+            }
+            else settingsError = L("Windows no permitió guardar tus preferencias.", "Windows did not allow saving your settings.");
         }
         RefreshPresence();
+    }
+
+    private void SwitchDiscordProfile(string key)
+    {
+        if (key == preferences.Features.DiscordMode) return;
+        var profiles = new Dictionary<string, DiscordProfile>(preferences.Features.DiscordProfiles ?? []);
+        var current = DiscordProfile.Capture(preferences);
+        profiles[preferences.Features.DiscordMode] = current;
+        var selected = profiles.GetValueOrDefault(key) ?? current;
+        var updated = selected.Apply(preferences);
+        SavePreferences(updated with { Options = updated.Features with { DiscordMode = key, DiscordProfiles = profiles } });
     }
 
     private void ToggleSharing()
@@ -283,6 +340,7 @@ internal sealed partial class MainForm : Form
         var now = Environment.TickCount64;
         var running = IsGameRunning();
         gameRunning = running;
+        if (running) WatchGamePhotos();
         if (running) sessionStarted ??= DateTime.UtcNow;
         else { sessionStarted = null; privateForSession = false; }
         if (!preferences.Features.ObsBrowser && overlay is not null)
@@ -307,10 +365,15 @@ internal sealed partial class MainForm : Form
         readerError = readError;
         var frozen = telemetry is not null && !IsFresh(telemetry, now);
         if (frozen) telemetry = null;
-        if (telemetry is null) ResetLocation(running);
-        else lastRevision = telemetry.PluginRevision;
+        if (!running || frozen || telemetry is null && now - lastGoodTelemetryAt > 4500) ResetLocation(running);
+        if (telemetry is not null)
+        {
+            lastGoodTelemetryAt = now;
+            lastRevision = telemetry.PluginRevision;
+        }
 
         liveSnapshot = telemetry;
+        var gameScreen = DetectGameScreen(running, telemetry, now);
         locate.Visible = canLocateGame && telemetry is null;
         launch.Visible = !running;
         var status = telemetry is not null ? L("ETS2 · Viaje detectado", "ETS2 · Trip detected") : frozen ? L("ETS2 · Datos detenidos", "ETS2 · Data stopped")
@@ -319,9 +382,11 @@ internal sealed partial class MainForm : Form
         SetStatus(gameStatus, status, telemetry is not null);
 
         var nearby = telemetry is null ? null : TrackCity(cities.FindNearby(telemetry.X, telemetry.Z));
-        if (telemetry is not null) TrackCountry(cities.FindCountry(telemetry.X, telemetry.Z));
-        var ending = journal.Observe(telemetry, DateTimeOffset.UtcNow, now);
-        UpdateRecording(telemetry, ending, now);
+        if (telemetry is not null) TrackCountry(cities.FindCountry(telemetry.X, telemetry.Z), now);
+        var ending = journal.Observe(telemetry?.Coach == true ? null : telemetry, DateTimeOffset.UtcNow, now, countrySamples >= 3 ? currentCountry : null);
+        var sessionEnding = journal.ObserveDrive(telemetry, DateTimeOffset.UtcNow, now, preferences.Features.JournalFreeDrive, running);
+        UpdateLiveNotices(telemetry, discordReady);
+        UpdateRecording(telemetry, ending ?? (sessionEnding?.JourneyType == "coach" ? sessionEnding : null), now);
         if (ending is not null) completedTrip = ending;
         else if (telemetry?.OnJob == true) completedTrip = null;
         var simulated = demo || replayOpen || demoScenario is not null;
@@ -332,6 +397,8 @@ internal sealed partial class MainForm : Form
                 X = -65398, Z = 48701, RouteDistanceMeters = 0 },
             "offline" => null,
             "job" => Sample,
+            "coach" => Sample with { Coach = true, Cargo = "", SourceCity = "Lyon", DestinationCity = "París",
+                Truck = new TruckInfo("Volvo", "9700 DD", 350, 600) },
             _ => demo ? Sample : telemetry
         };
         var isExample = demo || demoScenario is not null;
@@ -339,22 +406,31 @@ internal sealed partial class MainForm : Form
         var presenceSettings = PresencePrivacy.Apply(preferences, trip?.OnJob, privateDestination);
         var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
         var country = demoScenario == "roam" ? "ES" : isExample ? "FR" : currentCountry;
-        var presence = trip is null ? null : PresenceFormatter.Format(trip, displayedCity, presenceSettings, country);
+        homeArtworkNote = !presenceSettings.SharesCountry ? L("Portada genérica · Ubicación oculta", "Generic artwork · Location hidden")
+            : country is null ? L("Portada genérica · País sin detectar", "Generic artwork · Country unavailable") : null;
+        var discordCity = preferences.Features.DiscordMode == "stream" ? null : displayedCity;
+        var discordEnglish = presenceSettings.DiscordLanguage == "en";
+        var coachArtwork = trip?.Coach == true || (!simulated && trip is null && gameScreen.HasValue && lastVehicleWasCoach);
+        var presence = !simulated && gameScreen is { } screen
+            ? new PresenceText(PresenceFormatter.ScreenTitle(screen, coachArtwork, discordEnglish), DiscordIdentity.ActivityName)
+            : trip is null ? null : PresenceFormatter.Format(trip, discordCity, presenceSettings, country);
         UpdateActivity(telemetry);
         if (presence is not null)
             presence = presence with
             {
-                Started = preferences.ActivityTimer ? isExample ? DateTime.UtcNow.AddMinutes(-3) : preferences.Features.SessionTimer ? sessionStarted : activityStarted : null,
-                Image = preferences.ActivityImage ? DiscordIdentity.ImageFor(presenceSettings.ShowCity ? country : null) : null,
-                Badge = preferences.ActivityImage && trip is not null
-                    ? DiscordIdentity.ActivityBadge(trip.Paused ? "paused" : trip.OnJob ? "delivery" : "roam") : null
+                Started = preferences.ActivityTimer && preferences.Features.DiscordMode != "private"
+                    ? isExample ? DateTime.UtcNow.AddMinutes(-3) : preferences.Features.SessionTimer ? sessionStarted : activityStarted : null,
+                Image = preferences.ActivityImage && preferences.Features.DiscordMode != "private"
+                    ? DiscordIdentity.ImageFor(presenceSettings.SharesCountry ? country : null, releaseArtwork, discordEnglish, coachArtwork) : null
             };
         RenderTrip(trip, displayedCity, presence);
+        if (!simulated && gameScreen is { } displayedScreen)
+            travelMode.Text = PresenceFormatter.ScreenTitle(displayedScreen, coachArtwork, English);
         RenderExtras(trip, now, running, ready);
         RenderTools(trip, telemetry, ready, sharing && !simulated);
-        UpdateLiveNotices(telemetry, discordReady);
         RenderDashboard(trip, running, ready, now);
-        tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, !preferences.Features.LowPower || Visible);
+        var boundary = !isExample && journal.BoundaryCountry is { } crossed ? $"border:{crossed}" : null;
+        tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, !preferences.Features.LowPower || Visible, boundary);
         guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
             : demo ? L("Demostración local. El viaje de ejemplo no se publica.", "Local demo. The sample trip stays local.")
             : !preferences.Sharing ? L("La publicación está pausada. Puedes reanudarla desde este panel o la bandeja.", "Publishing is paused. Resume here or from the tray.")
@@ -372,9 +448,32 @@ internal sealed partial class MainForm : Form
                 "Distance or arrival time changed. ETS2 may have recalculated the route.");
         else if (quotaWarning is not null && recording is not null) guidance.Text = quotaWarning;
         var outgoing = PresencePublication.Select(presence, simulated, sharing, discordReady);
-        Publish(outgoing);
-        RenderPreview(outgoing, presence);
+        var transientReadFailure = running && telemetry is null && !frozen && now - lastGoodTelemetryAt <= 4500
+            && !simulated && sharing && discordReady && !preferences.ReaderDisabled && lastSent is not null && !publishImmediately;
+        if (outgoing is null && transientReadFailure)
+        {
+            presenceTimer.Stop();
+            pendingPresence = null;
+            RenderPreview(lastSent, presence);
+            return;
+        }
+        if (outgoing is null || publishImmediately)
+        {
+            presenceTimer.Stop();
+            pendingPresence = null;
+            Publish(outgoing);
+        }
+        else if (outgoing != pendingPresence)
+        {
+            pendingPresence = outgoing;
+            presenceTimer.Start();
+        }
+        publishImmediately = false;
+        RenderPreview(outgoing is null ? null : lastSent, presence);
     }
+
+    private long lastGoodTelemetryAt;
+    private long lastKnownCountryAt;
 
     private bool IsFresh(TelemetrySnapshot snapshot, long now)
     {
@@ -398,15 +497,26 @@ internal sealed partial class MainForm : Form
         return city;
     }
 
-    private void TrackCountry(string? country)
+    private void TrackCountry(string? country, long now)
     {
+        if (country == currentCountry && country is not null) lastKnownCountryAt = now;
+        if (country is null && currentCountry is not null && now - lastKnownCountryAt < 10_000)
+        {
+            countryCandidate = null;
+            countrySamples = 0;
+            return;
+        }
         if (country != countryCandidate)
         {
             countryCandidate = country;
             countrySamples = 1;
         }
         else if (countrySamples < 3) countrySamples++;
-        if (countrySamples == 3) currentCountry = countryCandidate;
+        if (countrySamples == 3 && currentCountry != countryCandidate)
+        {
+            currentCountry = countryCandidate;
+            lastKnownCountryAt = now;
+        }
     }
 
     private void ResetLocation(bool running)
@@ -415,12 +525,14 @@ internal sealed partial class MainForm : Form
         cityCandidate = null;
         citySamples = countrySamples = 0;
         currentCountry = countryCandidate = null;
+        lastKnownCountryAt = 0;
         if (!running) lastFrame = null;
     }
 
     private void Publish(PresenceText? presence)
     {
         if (!publication.ShouldSend(presence, Volatile.Read(ref connectionGeneration))) return;
+        if (presence is not null) Interlocked.Exchange(ref lastDiscordPublication, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         lastSent = presence;
         discordConfirmed = false;
         if (presence is null) discord.ClearPresence();
@@ -429,7 +541,7 @@ internal sealed partial class MainForm : Form
             Details = presence.Details, State = presence.State,
             Assets = presence.Image is { } image ? new Assets
             {
-                LargeImageKey = image, LargeImageText = DiscordIdentity.ActivityName, SmallImageKey = presence.Badge
+                LargeImageKey = image, LargeImageText = DiscordIdentity.ActivityName
             } : null,
             Timestamps = presence.Started is { } start ? new Timestamps { Start = start } : null
         });
@@ -450,8 +562,15 @@ internal sealed partial class MainForm : Form
         if (recording is not null)
         {
             manualStopJob = recordedJob ?? JobId(liveSnapshot);
-            FinishRecording();
-            MessageBox.Show(owner, L("Grabación guardada.", "Recording saved."), Text);
+            var result = FinishRecording();
+            MessageBox.Show(owner, result switch
+            {
+                RecordingFinish.Saved => L("Grabación guardada.", "Recording saved."),
+                RecordingFinish.Empty => L("No se grabaron muestras del juego.", "No game samples were recorded."),
+                RecordingFinish.Failed => L("No se pudo guardar la grabación.", "The recording could not be saved."),
+                _ => L("El archivo quedó disponible para intentar recuperarlo en Repeticiones.",
+                    "The file is available for a recovery attempt in Replays.")
+            }, Text);
             return;
         }
         if (demo || replayOpen || demoScenario is not null)
@@ -512,12 +631,14 @@ internal sealed partial class MainForm : Form
             StartPosition = FormStartPosition.CenterParent
         };
         using var telemetry = new StreamReader(AppResources.Open("RENCLOUD-LICENSE.txt"));
+        using var sdk = new StreamReader(AppResources.Open("SCS-SDK-LICENSE.txt"));
         using var cityData = new StreamReader(AppResources.Open("CITY-DATA-LICENSE.txt"));
         using var fluent = new StreamReader(AppResources.Open("FLUENT-LICENSE.txt"));
         window.Controls.Add(new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
             Text = "RenCloud SCS SDK Plugin\r\n\r\n" + telemetry.ReadToEnd()
+                + "\r\n\r\nSCS SDK\r\n\r\n" + sdk.ReadToEnd()
                 + "\r\n\r\nETS2 City Coordinate Retriever\r\n\r\n" + cityData.ReadToEnd()
                 + "\r\n\r\nMicrosoft Fluent UI System Icons\r\n\r\n" + fluent.ReadToEnd()
         });

@@ -1,4 +1,4 @@
-param([string]$Tag)
+param([string]$Tag, [switch]$VerifyRemoteArtwork)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -23,6 +23,25 @@ if (@($assetTags).Count -eq 0 -or @($assetTags | Where-Object { $_ -cne $expecte
     throw "Los assets de Discord deben usar $expectedTag."
 }
 
+if ($VerifyRemoteArtwork) {
+    $countryUrls = foreach ($name in 'country_art.json','country_art_en.json') {
+        $manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot "data/$name") | ConvertFrom-Json
+        $manifest.PSObject.Properties.Value
+    }
+    $coachRoot = [regex]::Match($identity, 'CoachArtworkRoot = "([^"]+)"').Groups[1].Value
+    $genericTruck = [regex]::Match($identity, 'ActivityImage = "([^"]+)"').Groups[1].Value
+    $checks = @($genericTruck, ($coachRoot + 'coach.jpg')) + @($countryUrls) + @(
+        $countryUrls | ForEach-Object { $coachRoot + [System.IO.Path]::GetFileName($_) }
+    )
+    $checks | Sort-Object -Unique | ForEach-Object -ThrottleLimit 12 -Parallel {
+        $result = Invoke-WebRequest -Uri $_ -Method Head -TimeoutSec 20
+        if ($result.StatusCode -ne 200 -or $result.Headers['Content-Type'] -notmatch 'image/jpeg') {
+            throw "Portada no disponible: $_"
+        }
+    }
+    Write-Host "$($checks.Count) portadas verificadas."
+}
+
 dotnet test (Join-Path $projectRoot 'tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj') `
     -c Release --artifacts-path (Join-Path $projectRoot 'dist/verification')
 if ($LASTEXITCODE -ne 0) { throw 'Falló la verificación previa a la publicación.' }
@@ -35,6 +54,21 @@ dotnet publish (Join-Path $projectRoot 'src/Ets2DiscordPresence/Ets2DiscordPrese
 if ($LASTEXITCODE -ne 0) { throw 'La publicación falló.' }
 
 if (-not (Test-Path -LiteralPath $exePath)) { throw "Falta $exePath" }
+$reportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("ets2-diagnostics-{0}.json" -f [guid]::NewGuid().ToString('N'))
+try {
+    $smokeArgs = @('--self-test', '--diagnostics-json', '--output', ('"{0}"' -f $reportPath))
+    $smoke = Start-Process -FilePath $exePath -ArgumentList $smokeArgs -PassThru -WindowStyle Hidden
+    if (-not $smoke.WaitForExit(30000)) {
+        Stop-Process -Id $smoke.Id -ErrorAction SilentlyContinue
+        throw 'El ejecutable superó el tiempo de comprobación.'
+    }
+    if ($smoke.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $reportPath)) { throw 'Falló la comprobación del ejecutable empaquetado.' }
+    $diagnostics = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json
+    if ($diagnostics.version -cne $version[0] -or -not $diagnostics.dataAvailable) { throw 'El diagnóstico del ejecutable es incoherente.' }
+}
+finally {
+    if (Test-Path -LiteralPath $reportPath) { Remove-Item -LiteralPath $reportPath }
+}
 $hash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$exePath.sha256" -Value "$hash  ETS2DiscordPresence.exe" -Encoding ascii
 Write-Host "Creado: $exePath"

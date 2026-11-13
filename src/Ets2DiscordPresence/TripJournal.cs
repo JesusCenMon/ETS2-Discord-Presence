@@ -6,7 +6,15 @@ namespace Ets2DiscordPresence;
 
 internal sealed record TripEntry(Guid Id, string Key, string Origin, string Destination, string Cargo,
     DateTimeOffset Started, DateTimeOffset? Finished, string Result, double Km, double DrivingSeconds, string Notes = "", string Tags = "", bool Favorite = false, string? Truck = null, double FuelLitres = 0, string? Recording = null,
-    DateTimeOffset? DeletedAt = null, bool? OnTime = null, double FuelKm = 0, int? Stops = null);
+    DateTimeOffset? DeletedAt = null, bool? OnTime = null, double FuelKm = 0, int? Stops = null, TripMeasurements? Measurements = null, string? JourneyType = null, long? Revenue = null);
+
+internal sealed record TripMeasurements(string Quality, DateTimeOffset TrackedFrom, double ObservedKm = 0,
+    double MovingSeconds = 0, double StoppedSeconds = 0, double SpeedSeconds = 0, double? MaximumKph = null,
+    double RefueledLitres = 0, double? DeliveredKm = null, string[]? Countries = null, string? DestinationCountry = null,
+    Dictionary<string, double>? CountryKm = null, DateTimeOffset? PickedUpAt = null)
+{
+    public double? AverageKph => MovingSeconds > 0 ? SpeedSeconds / MovingSeconds : null;
+}
 internal sealed record JournalData(List<TripEntry> Entries, List<TripEntry> Pending, List<TripEntry>? Trash = null);
 
 internal sealed class TripJournal
@@ -17,6 +25,7 @@ internal sealed class TripJournal
     private TripEntry? active;
     private TelemetrySnapshot? previous;
     private long previousAt;
+    private string? previousCountry;
     private long lastSaved;
     private long lastFerry;
     private long lastRest;
@@ -28,6 +37,8 @@ internal sealed class TripJournal
     public IReadOnlyList<TripEntry> Trash => data.Trash!;
     public string? Error { get; private set; }
     public bool Recovered { get; private set; }
+    public TripMeasurements? LiveMeasurements => active?.Measurements;
+    public string? BoundaryCountry { get; private set; }
 
     public TripJournal(string? path = null)
     {
@@ -49,11 +60,68 @@ internal sealed class TripJournal
         }
     }
 
-    public TripEntry? Observe(TelemetrySnapshot? trip, DateTimeOffset utc, long now)
+    private TripEntry? drive;
+    private TelemetrySnapshot? previousDrive;
+    private long previousDriveAt;
+    private long lastDrivingAt;
+
+    public TripEntry? ObserveDrive(TelemetrySnapshot? trip, DateTimeOffset utc, long now, bool keepFreeDrive, bool gameRunning)
     {
+        var kind = trip is { Coach: true, OnJob: true, DestinationCity.Length: > 0 } ? "coach"
+            : trip is { OnJob: false } && keepFreeDrive ? "free" : null;
+        var key = kind == "coach" ? $"coach|{trip!.SourceCity}|{trip.DestinationCity}|{trip.Signals?.DestinationId}" : kind;
+        TripEntry? closed = null;
+        if (drive is { } activeDrive && (!gameRunning || trip is not null && key != activeDrive.Key
+            || activeDrive.JourneyType == "free" && now - lastDrivingAt >= 300_000))
+        {
+            if (activeDrive.Km >= .1 || activeDrive.DrivingSeconds >= 30)
+            {
+                closed = activeDrive with { Finished = utc, Result = "ended" };
+                data.Entries.Add(closed);
+                dirty = true;
+                Flush(now);
+            }
+            drive = null;
+            previousDrive = null;
+        }
+
+        if (trip is { Paused: false, Signals: { } current } && kind is not null)
+        {
+            if (drive is null && Math.Abs(current.Speed) > .25f)
+            {
+                drive = new TripEntry(Guid.NewGuid(), key!, trip.SourceCity, trip.DestinationCity, "",
+                    utc, null, "", 0, 0, Truck: TruckLabel(trip.Truck), JourneyType: kind);
+                lastDrivingAt = now;
+            }
+            if (drive is not null && previousDrive is { Signals: { } prior } previousTrip)
+            {
+                var delta = current.Odometer - prior.Odometer;
+                var elapsed = now - previousDriveAt;
+                if (ValidInterval(previousTrip, trip, delta, elapsed) && Math.Abs(current.Speed) > .25f)
+                {
+                    lastDrivingAt = now;
+                    drive = drive with { Km = drive.Km + delta, DrivingSeconds = drive.DrivingSeconds + elapsed / 1000d };
+                }
+            }
+            previousDrive = drive is null ? null : trip;
+            previousDriveAt = now;
+        }
+        else previousDrive = null;
+        return closed;
+    }
+
+    public TripEntry? Observe(TelemetrySnapshot? trip, DateTimeOffset utc, long now, string? country = null)
+    {
+        BoundaryCountry = null;
         if (trip?.Signals is not { } signals)
         {
+            if (active?.Measurements is { Quality: "complete" } measurements)
+            {
+                active = active with { Measurements = measurements with { Quality = "partial" } };
+                SaveActive();
+            }
             previous = null;
+            previousCountry = null;
             stoppedSince = null;
             stopCounted = false;
             lastFerry = lastRest = 0;
@@ -75,6 +143,12 @@ internal sealed class TripJournal
                 summary = ended with
                 {
                     Finished = utc, Result = delivered ? "delivered" : "cancelled", Km = km,
+                    Revenue = delivered ? signals.Revenue : null,
+                    Measurements = ended.Measurements is { } measured ? measured with
+                    {
+                        DeliveredKm = delivered && signals.DeliveredKm is > 0 and < 100_000 ? signals.DeliveredKm : null,
+                        DestinationCountry = delivered ? country : null
+                    } : null,
                     OnTime = delivered && old.Deadline > 0 ? signals.FinishedAt <= old.Deadline : null
                 };
                 data.Entries.Add(summary);
@@ -104,14 +178,30 @@ internal sealed class TripJournal
                 Recovered = active is not null;
                 active ??= new TripEntry(Guid.NewGuid(), key, trip.SourceCity, trip.DestinationCity, trip.Cargo,
                     utc, null, "", 0, 0, Truck: TruckLabel(trip.Truck), Stops: 0);
+                var quality = Recovered ? "recovered" : previous is { OnJob: false } ? "complete" : "partial";
+                var measurements = active.Measurements ?? new TripMeasurements(quality, utc);
+                active = active with { Measurements = measurements with { Quality = quality } };
                 SaveActive();
                 Flush(now);
             }
-            if (sameTrip && old is not null && previous is { Paused: false, OnJob: true } && !trip.Paused)
+            if (signals.Loaded && active?.Measurements is { PickedUpAt: null } pickup)
+            {
+                active = active with { Measurements = pickup with { PickedUpAt = utc } };
+                SaveActive();
+            }
+            if (signals.Loaded && !trip.Paused && country is not null && active?.Measurements is { } observed
+                && observed.Countries?.LastOrDefault() != country)
+            {
+                if (observed.Countries is { Length: > 0 }) BoundaryCountry = country;
+                active = active with { Measurements = observed with { Countries = [.. observed.Countries ?? [], country] } };
+                SaveActive();
+            }
+            if (sameTrip && old is { Loaded: true } && signals.Loaded && previous is { Paused: false, OnJob: true } && !trip.Paused)
             {
                 var delta = signals.Odometer - old.Odometer;
                 var elapsed = now - previousAt;
-                if (elapsed is > 0 and <= 6000 && Math.Abs(signals.Speed) <= .25f)
+                var valid = ValidInterval(previous, trip, delta, elapsed);
+                if (valid && Math.Abs(signals.Speed) <= .25f)
                 {
                     stoppedSince ??= now;
                     if (!stopCounted && now - stoppedSince >= 10_000)
@@ -126,14 +216,39 @@ internal sealed class TripJournal
                     stoppedSince = null;
                     stopCounted = false;
                 }
-                if (elapsed is > 0 and <= 6000 && Math.Abs(signals.Speed) > .25f && delta is >= 0 and <= 10)
+                if (active?.Measurements is { } measured && valid)
                 {
-                    var litres = previous.Truck?.Litres - trip.Truck?.Litres;
-                    active = active! with
+                    var seconds = elapsed / 1000d;
+                    var speed = Math.Abs(signals.Speed) * 3.6;
+                    var moving = Math.Abs(signals.Speed) > .25f;
+                    var sameTruck = TruckLabel(previous.Truck) == TruckLabel(trip.Truck)
+                        && previous.Truck?.Capacity == trip.Truck?.Capacity;
+                    var litres = sameTruck && previous.Truck?.FuelPercent is not null && trip.Truck?.FuelPercent is not null
+                        ? previous.Truck.Litres - trip.Truck.Litres : null;
+                    var used = litres is >= 0 and <= 2;
+                    var added = litres is < 0 && (old.Refueling || signals.Refueling);
+                    var countryKm = measured.CountryKm;
+                    if (delta > 0 && country is not null && country == previousCountry)
                     {
-                        Km = active.Km + delta, DrivingSeconds = active.DrivingSeconds + elapsed / 1000d,
-                        FuelLitres = active.FuelLitres + (litres is > 0 and < 25 ? litres.Value : 0),
-                        FuelKm = active.FuelKm + (litres is >= 0 and < 25 ? delta : 0)
+                        countryKm ??= new();
+                        countryKm[country] = countryKm.GetValueOrDefault(country) + delta;
+                    }
+                    active = active with
+                    {
+                        Km = active.Km + delta,
+                        DrivingSeconds = active.DrivingSeconds + (moving ? seconds : 0),
+                        FuelLitres = active.FuelLitres + (used ? litres!.Value : 0),
+                        FuelKm = active.FuelKm + (used || added ? delta : 0),
+                        Measurements = measured with
+                        {
+                            ObservedKm = measured.ObservedKm + delta,
+                            MovingSeconds = measured.MovingSeconds + (moving ? seconds : 0),
+                            StoppedSeconds = measured.StoppedSeconds + (moving ? 0 : seconds),
+                            SpeedSeconds = measured.SpeedSeconds + (moving ? speed * seconds : 0),
+                            MaximumKph = Math.Max(measured.MaximumKph ?? 0, speed),
+                            RefueledLitres = measured.RefueledLitres + (added ? -litres!.Value : 0),
+                            CountryKm = countryKm
+                        }
                     };
                     SaveActive();
                 }
@@ -151,10 +266,19 @@ internal sealed class TripJournal
             stopCounted = false;
         }
         previous = trip;
+        previousCountry = country;
         previousAt = now;
         if (now - lastSaved >= 15_000) Flush(now);
         return summary;
     }
+
+    private static bool ValidInterval(TelemetrySnapshot previous, TelemetrySnapshot current, double delta, long elapsed) =>
+        elapsed is > 0 and <= 6000 && delta is >= 0 and <= .6
+        && previous.Signals is { Ferry: false, Speed: >= -100 and <= 100 }
+        && current.Signals is { Ferry: false, Speed: >= -100 and <= 100 }
+        && (previous.RenderTime != current.RenderTime || current.RenderTime == 0)
+        && double.IsFinite(current.X) && double.IsFinite(current.Z)
+        && Math.Abs(current.X - previous.X) + Math.Abs(current.Z - previous.Z) <= 1500;
 
     public string? Manoeuvre(TelemetrySnapshot trip, long now)
     {
@@ -306,15 +430,27 @@ internal sealed class TripJournal
     public static void Export(string file, IEnumerable<TripEntry> entries, bool english)
     {
         var csv = new StringBuilder(english
-            ? "Finished,Origin,Destination,Cargo,Result,Distance km,Driving minutes\r\n"
-            : "Fecha,Origen,Destino,Carga,Resultado,Distancia km,Minutos al volante\r\n");
+            ? "Finished,Origin,Destination,Cargo,Result,Distance km,Driving minutes,Trip type,Revenue\r\n"
+            : "Fecha,Origen,Destino,Carga,Resultado,Distancia km,Minutos al volante,Tipo de viaje,Ingresos\r\n");
         foreach (var entry in entries)
         {
-            var result = entry.Result == "delivered" ? (english ? "Delivered" : "Entregada") : (english ? "Cancelled" : "Cancelada");
+            var result = entry.Result switch
+            {
+                "delivered" => english ? "Delivered" : "Entregada",
+                "ended" => english ? "Session ended" : "Sesión cerrada",
+                _ => english ? "Cancelled" : "Cancelada"
+            };
+            var kind = entry.JourneyType switch
+            {
+                "coach" => english ? "Passengers" : "Pasajeros",
+                "free" => english ? "Free driving" : "Conducción libre",
+                _ => english ? "Delivery" : "Entrega"
+            };
             csv.AppendLine(string.Join(',', Csv(entry.Finished?.ToLocalTime().ToString("O") ?? ""),
                 Csv(entry.Origin), Csv(entry.Destination), Csv(entry.Cargo), Csv(result),
                 entry.Km.ToString("0.0", CultureInfo.InvariantCulture),
-                (entry.DrivingSeconds / 60).ToString("0.0", CultureInfo.InvariantCulture)));
+                (entry.DrivingSeconds / 60).ToString("0.0", CultureInfo.InvariantCulture), Csv(kind),
+                entry.Revenue?.ToString(CultureInfo.InvariantCulture) ?? ""));
         }
         File.WriteAllText(file, csv.ToString(), new UTF8Encoding(true));
     }

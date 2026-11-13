@@ -11,7 +11,7 @@ internal sealed partial class MainForm
         void LoadItems()
         {
             list.Items.Clear();
-            DataAction(window, () => list.Items.AddRange(LocalData.TrashedRecordings().Select(path => new RecordingItem(path)).Cast<object>().ToArray()));
+            DataAction(window, () => list.Items.AddRange(LocalData.TrashedRecordings().Select(path => RecordingItem.FromFile(path, false)).Cast<object>().ToArray()));
             if (list.Items.Count > 0) list.SelectedIndex = 0;
             restore.Enabled = list.SelectedIndex >= 0;
         }
@@ -99,8 +99,18 @@ internal sealed partial class MainForm
         var from = new NumericUpDown { DecimalPlaces = 1, Maximum = endAt, Value = Math.Min(endAt, current / 1000m) };
         var to = new NumericUpDown { DecimalPlaces = 1, Maximum = endAt, Value = endAt };
         var save = MakeButton(L("Guardar copia…", "Save copy…"));
+        var duration = TextLabel("", 10, true);
+        void UpdateDuration()
+        {
+            var length = Math.Max(0, to.Value - from.Value);
+            save.Enabled = length > 0;
+            duration.Text = L($"Duración · {length:N1} s", $"Duration · {length:N1} s");
+        }
+        from.ValueChanged += (_, _) => UpdateDuration();
+        to.ValueChanged += (_, _) => UpdateDuration();
+        UpdateDuration();
         AddRows(layout, TextLabel(L("Inicio en segundos", "Start in seconds"), 10, true), from,
-            TextLabel(L("Final en segundos", "End in seconds"), 10, true), to, save);
+            TextLabel(L("Final en segundos", "End in seconds"), 10, true), to, duration, save);
         save.Click += (_, _) =>
         {
             if (from.Value >= to.Value) return;
@@ -119,7 +129,7 @@ internal sealed partial class MainForm
         window.ShowDialog(owner);
     }
 
-    private bool RenameMarker(string file, List<RecordedFrame> data, IWin32Window owner)
+    private bool RenameMarker(string file, List<RecordedFrame> data, IWin32Window owner, DateTimeOffset startedAt)
     {
         using var window = ToolWindow(L("Nombrar marcador", "Name marker"), new Size(460, 310));
         var layout = Grid(1);
@@ -128,8 +138,13 @@ internal sealed partial class MainForm
         if (markers.Length == 0) return false;
         var choose = Choice(layout, L("Marcador", "Marker"), markers
             .Select(item => $"{ReplayTime(item.frame.ElapsedMs)} · {item.frame.Marker}").ToArray(), 0);
-        var title = FeatureText(layout, L("Nombre nuevo", "New name"), markers[0].frame.Marker, 80);
-        choose.SelectedIndexChanged += (_, _) => title.Text = markers[choose.SelectedIndex].frame.Marker;
+        var title = FeatureText(layout, L("Título corto", "Short title"), markers[0].frame.Marker, 80);
+        var note = FeatureText(layout, L("Nota opcional", "Optional note"), markers[0].frame.Note, 500);
+        choose.SelectedIndexChanged += (_, _) =>
+        {
+            title.Text = markers[choose.SelectedIndex].frame.Marker;
+            note.Text = markers[choose.SelectedIndex].frame.Note;
+        };
         var save = MakeButton(L("Guardar", "Save"));
         save.Click += (_, _) => { if (!string.IsNullOrWhiteSpace(title.Text)) window.DialogResult = DialogResult.OK; };
         AddRows(layout, save);
@@ -138,9 +153,52 @@ internal sealed partial class MainForm
         if (window.ShowDialog(owner) != DialogResult.OK) return false;
         var index = markers[choose.SelectedIndex].index;
         var original = data[index];
-        data[index] = original with { Marker = title.Text.Trim() };
-        if (DataAction(owner, () => TelemetryReplay.Save(file, data))) return true;
+        data[index] = original with { Marker = title.Text.Trim(), Note = note.Text.Trim() };
+        if (DataAction(owner, () => TelemetryReplay.Save(file, data, startedAt))) return true;
         data[index] = original;
         return false;
+    }
+
+    private bool RemoveMarkers(string path, List<RecordedFrame> data, IWin32Window owner, DateTimeOffset startedAt)
+    {
+        using var window = ToolWindow(L("Eliminar marcadores", "Remove bookmarks"), new Size(510, 400));
+        var list = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, AccessibleName = window.Text };
+        var markers = data.Select((frame, index) => (frame, index)).Where(item => !string.IsNullOrWhiteSpace(item.frame.Marker)).ToArray();
+        foreach (var item in markers) list.Items.Add($"{ReplayTime(item.frame.ElapsedMs)} · {item.frame.Marker}");
+        var remove = MakeButton(L("Eliminar seleccionados", "Delete selected"));
+        remove.Dock = DockStyle.Bottom;
+        remove.Click += (_, _) =>
+        {
+            if (list.CheckedItems.Count > 0 && Confirm(window, L($"¿Eliminar {list.CheckedItems.Count} marcadores?", $"Remove {list.CheckedItems.Count} bookmarks?")))
+                window.DialogResult = DialogResult.OK;
+        };
+        window.Controls.Add(list);
+        window.Controls.Add(remove);
+        StyleTool(window);
+        if (window.ShowDialog(owner) != DialogResult.OK) return false;
+        var modified = data.ToArray();
+        foreach (var selected in list.CheckedIndices.Cast<int>())
+        {
+            var index = markers[selected].index;
+            modified[index] = modified[index] with { Marker = null, Note = null };
+        }
+        if (!DataAction(owner, () => TelemetryReplay.Save(path, modified, startedAt))) return false;
+        data.Clear();
+        data.AddRange(modified);
+        return true;
+    }
+
+    private void ExportMarkers(IReadOnlyList<RecordedFrame> data, IWin32Window owner)
+    {
+        using var picker = new SaveFileDialog { Filter = "JSON (*.json)|*.json|CSV (*.csv)|*.csv", FileName = "ETS2-markers.json" };
+        if (picker.ShowDialog(owner) != DialogResult.OK) return;
+        var markers = data.Where(frame => !string.IsNullOrWhiteSpace(frame.Marker))
+            .Select(frame => new { time = ReplayTime(frame.ElapsedMs), elapsedMs = frame.ElapsedMs, category = "bookmark", title = frame.Marker, note = frame.Note }).ToArray();
+        string Quote(string? value) => "\"" + (value ?? "").Replace("\"", "\"\"") + "\"";
+        var output = picker.FilterIndex == 1
+            ? System.Text.Json.JsonSerializer.Serialize(markers, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+            : "time,elapsedMs,category,title,note\n" + string.Join('\n', markers.Select(item =>
+                $"{item.time},{item.elapsedMs},{item.category},{Quote(item.title)},{Quote(item.note)}"));
+        DataAction(owner, () => LocalData.WriteFile(picker.FileName, output));
     }
 }

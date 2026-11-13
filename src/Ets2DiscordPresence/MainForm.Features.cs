@@ -130,7 +130,9 @@ internal sealed partial class MainForm
                 : trip.RemainingKm is < .3 && trip.Signals is { ParkBrake: true } ? 3
                 : trip.RemainingKm is < 20 ? 2 : 1
             : -1;
-        var phases = new[] { L("Recogida", "Pickup"), L("En ruta", "On the road"), L("Llegando", "Arriving"), L("Descarga probable", "Likely unloading") };
+        var phases = new[] { trip?.Coach == true ? L("Embarque", "Boarding") : L("Recogida", "Pickup"),
+            L("En ruta", "On the road"), L("Llegando", "Arriving"),
+            trip?.Coach == true ? L("En la parada", "At the stop") : L("Descarga probable", "Likely unloading") };
         var steps = string.Join("   ·   ", phases.Select((phase, index) => index == stage ? $"● {phase}" : phase));
         var manoeuvre = trip is not null && !demo ? journal.Manoeuvre(trip, now) switch
         {
@@ -179,7 +181,7 @@ internal sealed partial class MainForm
             var current = Screen.FromControl(this);
             var target = Screen.AllScreens.FirstOrDefault(screen => screen.DeviceName != current.DeviceName) ?? current;
             fullScreen = true;
-            Navigate("trip");
+            Navigate("trip", remember: false);
             WindowState = FormWindowState.Normal;
             FormBorderStyle = FormBorderStyle.None;
             Bounds = target.Bounds;
