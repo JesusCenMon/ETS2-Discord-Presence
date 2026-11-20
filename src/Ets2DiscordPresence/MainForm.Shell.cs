@@ -13,17 +13,25 @@ internal sealed partial class MainForm
     private readonly Panel homePage = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly Dictionary<string, NavigationButton> navigation = [];
     private readonly Dictionary<string, NavigationButton> themeButtons = [];
-    private readonly ToolTip shellTips = new();
+    private readonly ToolTip shellTips = new() { InitialDelay = 150, ReshowDelay = 75, AutoPopDelay = 4000 };
     private readonly Label sidebarGame = TextLabel("", 9);
     private readonly Label sidebarDiscord = TextLabel("", 9);
     private readonly Label homeHeadline = TextLabel("", 12, true);
-    private readonly Label homeDetail = TextLabel("", 11, true);
-    private readonly Label homeState = TextLabel("", 10);
-    private readonly Label homeStatus = TextLabel("", 9);
-    private readonly Label homeGame = TextLabel("", 9);
-    private readonly PictureBox homeLarge = new() { Size = new Size(72, 54), SizeMode = PictureBoxSizeMode.Zoom };
-    private readonly PictureBox homeBadge = new() { Size = new Size(24, 24), SizeMode = PictureBoxSizeMode.Zoom };
-    private readonly FlowLayoutPanel homeImages = ToolBar();
+    private readonly Label homeDetail = TextLabel("", 22, true);
+    private readonly Label homeState = TextLabel("", 12);
+    private readonly Label homeStatus = TextLabel("", 10);
+    private readonly Label homeElapsed = TextLabel("", 10, true);
+    private readonly Label homeConnectionNote = TextLabel("", 10);
+    private readonly Label homeFriend = TextLabel("", 10);
+    private readonly Label homeGame = TextLabel("", 10, true);
+    private readonly Label homeDiscord = TextLabel("", 10, true);
+    private readonly PictureBox homeLarge = new() { Size = new Size(248, 248), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false };
+    private readonly Label homeArtNote = TextLabel("", 9);
+    private readonly Button homeAction = MakeButton("");
+    private readonly Button homeTrip = MakeButton("");
+    private Label? homeTitle;
+    private readonly PictureBox compactArtwork = new() { Size = new Size(48, 48), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false };
+    private string? homeArtworkNote;
     private Panel tripShellPage = null!;
     private FlowLayoutPanel themeStrip = null!;
     private string currentPage = "home";
@@ -33,6 +41,22 @@ internal sealed partial class MainForm
     private bool shellDiscordReady;
     private ShellPalette shellPalette = ShellPalette.Dark;
 
+    private Label? statusToast;
+    private readonly System.Windows.Forms.Timer statusToastTimer = new() { Interval = 2900 };
+
+    private void ShowStatusToast(string message)
+    {
+        if (!Visible || statusToast is null) return;
+        statusToast.Text = message;
+        statusToast.AccessibleName = message;
+        statusToast.BackColor = shellPalette.Elevated;
+        statusToast.ForeColor = shellPalette.Text;
+        statusToast.Visible = true;
+        Reveal(statusToast);
+        statusToastTimer.Stop();
+        statusToastTimer.Start();
+    }
+
     private void BuildShell(Panel tripPage)
     {
         tripShellPage = tripPage;
@@ -40,22 +64,44 @@ internal sealed partial class MainForm
         appShell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         appShell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         appShell.Controls.Add(sidebar, 0, 0);
-        appShell.Controls.Add(pageHost, 1, 0);
+        var dashboard = Grid(1);
+        dashboard.Dock = DockStyle.Fill;
+        dashboard.AutoSize = false;
+        dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        dashboard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        dashboard.Controls.Add(pageHost, 0, 0);
+        currentTripBar = CreateTripBar(() => Navigate("trip"));
+        dashboard.Controls.Add(currentTripBar, 0, 1);
+        statusToast = TextLabel("", 10, true);
+        statusToast.Padding = new Padding(16, 8, 16, 8);
+        statusToast.Margin = Padding.Empty;
+        statusToast.Visible = false;
+        dashboard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        dashboard.Controls.Add(statusToast, 0, 2);
+        statusToastTimer.Tick += (_, _) =>
+        {
+            statusToastTimer.Stop();
+            statusToast.Visible = false;
+        };
+        Disposed += (_, _) => statusToastTimer.Dispose();
+        appShell.Controls.Add(dashboard, 1, 0);
         pageHost.Controls.Add(tripShellPage);
         pageHost.Controls.Add(homePage);
         Controls.Add(appShell);
         Disposed += (_, _) => shellTips.Dispose();
 
         var menu = Grid(1);
-        menu.Padding = new Padding(0, 2, 0, 0);
-        AddNavigation(menu, "home", "home", "Inicio", "Home", () => Navigate("home"));
+        menu.Padding = new Padding(0, 4, 0, 0);
+        AddNavigation(menu, "home", "home", "Inicio", "Home", () =>
+        {
+            Navigate("home");
+            if (homeTitle is { } heading && heading.Focus()) homePage.ScrollControlIntoView(heading);
+        });
         AddNavigation(menu, "trip", "vehicle_truck", "Viaje", "Trip", () => Navigate("trip"));
-        AddNavigation(menu, "journal", "book_open", "Diario", "Journal", ShowHistory);
-        AddNavigation(menu, "replay", "play_circle", "Repeticiones", "Replays", ShowRecordings);
+        AddNavigation(menu, "journal", "book_open", "Diario", "Journal", () => Navigate("journal"));
+        AddNavigation(menu, "replay", "play_circle", "Repeticiones", "Replays", () => Navigate("replay"));
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
-        AddNavigation(menu, "display", "eye", "Apariencia", "Display", () => ShowSettings("display"));
-        AddNavigation(menu, "behavior", "options", "Comportamiento", "Behavior", () => ShowSettings("behavior"));
-        AddNavigation(menu, "advanced", "settings", "Avanzado", "Advanced", () => ShowSettings("advanced"));
+        AddNavigation(menu, "settings", "settings", "Ajustes", "Settings", () => ShowFromNavigation("settings", () => ShowSettings()));
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
         AddNavigation(menu, "help", "question_circle", "Ayuda", "Help", ShowConnectionGuide);
         AddNavigation(menu, "about", "info", "Acerca de", "About", ShowAbout);
@@ -75,6 +121,7 @@ internal sealed partial class MainForm
         menuViewport.Controls.Add(menu);
         sidebar.Controls.Add(menuViewport);
         sidebar.Controls.Add(footer);
+        sidebar.ClientSizeChanged += (_, _) => UpdateShellLabels();
         sidebar.Paint += (_, e) =>
         {
             using var border = new Pen(shellPalette.Border);
@@ -82,7 +129,7 @@ internal sealed partial class MainForm
         };
 
         BuildHome();
-        Navigate("home");
+        Navigate(preferences.Features.LastSection switch { null or "home" => "home", _ => "trip" }, remember: false);
     }
 
     private void AddNavigation(TableLayoutPanel grid, string key, string iconName, string es, string en, Action action)
@@ -91,8 +138,27 @@ internal sealed partial class MainForm
         button.Width = 1;
         button.Dock = DockStyle.Top;
         button.Click += (_, _) => action();
+        button.SelectionMotion = () => Motion;
+        button.Enter += (_, _) =>
+        {
+            if (button.IconsOnly) shellTips.Show(button.Text, button, button.Width, 0, 1800);
+        };
+        button.Leave += (_, _) => shellTips.Hide(button);
         navigation.Add(key, button);
         AddRows(grid, button);
+    }
+
+    private void ShowFromNavigation(string key, Action action)
+    {
+        foreach (var (name, button) in navigation) button.SetSelected(name == key);
+        var previousTitle = Text;
+        if (navigation.TryGetValue(key, out var selected)) Text = $"ETS2 Discord Presence · {selected.Text}";
+        try { action(); }
+        finally
+        {
+            Text = previousTitle;
+            foreach (var (name, button) in navigation) button.SetSelected(name == currentPage);
+        }
     }
 
     private void AddTheme(string key, string iconName, string es, string en)
@@ -109,26 +175,69 @@ internal sealed partial class MainForm
         content.Padding = new Padding(28, 20, 28, 24);
         homePage.Controls.Add(content);
 
-        var title = UiLabel("Inicio", "Home", 23, true);
-        title.Margin = new Padding(0, 0, 0, 18);
-        AddRows(content, title);
+        homeTitle = Translate(new HeadingLabel(), "Inicio", "Home");
+        homeTitle.Margin = new Padding(0, 0, 0, 16);
+        AddRows(content, homeTitle);
+        BuildDriveOverview(content);
 
         var activity = new ShellCard();
         var presenceTitle = UiLabel("Actividad en Discord", "Discord presence", 14, true);
-        var presenceHint = UiLabel("Consulta la actividad que la aplicación envía a Discord.", "See the activity the app sends to Discord.", 10);
-        presenceHint.Tag = "muted";
         homeStatus.Tag = "muted";
         homeState.Tag = "muted";
-        homeImages.Controls.AddRange([homeLarge, homeBadge]);
-        AddRows(activity, presenceTitle, presenceHint, new ShellRule { Margin = new Padding(0, 12, 0, 8) },
-            homeHeadline, homeDetail, homeState, homeImages, homeStatus);
-        AddRows(content, activity);
+        var cardLayout = Grid(2);
+        cardLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        cardLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var cardText = Grid(1);
+        cardText.Margin = new Padding(20, 0, 0, 0);
+        homeLarge.AccessibleName = L("Portada de Discord", "Discord artwork");
+        using (var art = AppResources.Open("fluent.vehicle_truck.png"))
+        {
+            using var original = Image.FromStream(art);
+            var placeholder = new Bitmap(original);
+            homeLarge.Disposed += (_, _) => placeholder.Dispose();
+            homeLarge.Paint += (_, e) =>
+            {
+                if (homeLarge.Image is not null) return;
+                using var fill = new SolidBrush(shellPalette.Hover);
+                e.Graphics.FillRectangle(fill, homeLarge.ClientRectangle);
+                var iconSize = homeLarge.Width / 4;
+                e.Graphics.DrawImage(placeholder, (homeLarge.Width - iconSize) / 2, (homeLarge.Height - iconSize) / 2, iconSize, iconSize);
+            };
+        }
+        cardLayout.Controls.Add(homeLarge, 0, 0);
+        cardLayout.Controls.Add(cardText, 1, 0);
+        homeArtNote.Tag = "muted";
+        AddRows(cardText, homeHeadline, homeDetail, homeState, homeElapsed, homeStatus, homeArtNote);
+        homeAction.Click += (_, _) =>
+        {
+            if (!preferences.Sharing) ToggleSharing();
+            else if (!gameRunning) OpenExternal("steam://rungameid/227300");
+            else if (liveSnapshot is null && (restartNeeded || setupError is not null || preferences.ReaderDisabled)) ShowConnectionGuide();
+            else OpenExternal("discord://");
+        };
+        homeTrip.Click += (_, _) => Navigate("trip");
+        homeAction.Tag = "primary";
+        var shortcuts = ToolBar();
+        shortcuts.Controls.AddRange([homeAction, homeTrip]);
+        AddRows(cardText, shortcuts);
+        var statusRow = ToolBar();
+        statusRow.Controls.AddRange([homeGame, homeDiscord]);
+        homeGame.Margin = new Padding(0, 4, 16, 4);
+        homeConnectionNote.MinimumSize = new Size(0, 32);
+        homeConnectionNote.Tag = "muted";
+        homeFriend.Tag = "muted";
+        AddRows(activity, presenceTitle, cardLayout);
+        AddRows(content, activity, statusRow, homeConnectionNote);
+        ObserveText(homeDetail, () => shellPalette.Accent);
+        ObserveText(homeStatus, () => shellPalette.Accent);
+        ObserveText(homeConnectionNote, () => shellPalette.Accent);
+        ObserveText(homeArtNote, () => shellPalette.Accent);
 
-        var fields = new ShellCard();
-        var fieldsHint = UiLabel("Elige qué compartir desde Comportamiento y Ajustes de Discord.",
-            "Choose what to share from Behavior and Discord settings.", 10);
+        var fields = Grid(1);
+        var fieldsHint = UiLabel("Elige qué compartir en Ajustes de Discord.",
+            "Choose what to share in Discord settings.", 10);
         fieldsHint.Tag = "muted";
-        AddRows(fields, UiLabel("Qué aparece en tu actividad", "What your activity shows", 14, true), fieldsHint,
+        AddRows(fields, fieldsHint,
             new ShellRule { Margin = new Padding(0, 12, 0, 4) });
 
         var table = Grid(2);
@@ -141,30 +250,66 @@ internal sealed partial class MainForm
         AddFeatureRow("Conducción libre", "Free driving", "Sin una entrega activa", "Without an active delivery");
         AddFeatureRow("Temporizador", "Elapsed time", "Si está activado", "When enabled");
         AddRows(fields, table);
-        AddRows(content, fields);
+        var compactCard = Grid(2);
+        compactCard.BackColor = shellPalette.Hover;
+        compactCard.Padding = new Padding(8);
+        compactCard.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        compactCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        compactArtwork.Margin = new Padding(0, 0, 8, 0);
+        compactCard.Controls.Add(compactArtwork, 0, 0);
+        compactCard.Controls.Add(homeFriend, 1, 0);
+        AddRows(fields, UiLabel("Vista aproximada para amigos", "Approximate friends view", 11, true), compactCard);
+        var showFields = Translate(MakeButton(""), "Qué aparece en tu actividad", "What your activity shows");
+        showFields.Tag = "quiet";
+        showFields.Anchor = AnchorStyles.Left;
+        fields.Visible = false;
+        showFields.Click += (_, _) =>
+        {
+            fields.Visible = !fields.Visible;
+            if (fields.Visible) AnimatePageEdge(fields);
+            showFields.AccessibleDescription = fields.Visible ? L("Sección expandida", "Section expanded") : L("Sección plegada", "Section collapsed");
+        };
+        AddRows(content, showFields, fields);
 
-        var connection = new ShellCard();
-        homeGame.Tag = "muted";
+        var connection = Grid(1);
         var check = Translate(MakeButton(""), "Revisar conexión", "Check connection");
         check.Anchor = AnchorStyles.Left;
+        check.Tag = "quiet";
         check.Click += (_, _) => ShowConnectionGuide();
-        var open = Translate(MakeButton(""), "Abrir ETS2", "Launch ETS2");
-        open.Anchor = AnchorStyles.Left;
-        open.Click += (_, _) => OpenExternal("steam://rungameid/227300");
         var tools = ToolBar();
-        tools.Controls.AddRange([open, check]);
-        AddRows(connection, UiLabel("Conexión con ETS2", "ETS2 connection", 14, true), homeGame, tools);
+        tools.Controls.Add(check);
+        AddRows(connection, tools);
         AddRows(content, connection);
         homePage.ClientSizeChanged += (_, _) => ResizeHome();
 
         void ResizeHome()
         {
+            var scale = DeviceDpi / 96f;
+            var shortWindow = homePage.ClientSize.Height < 550 * scale;
+            var inset = (int)((shortWindow ? 16 : 28) * scale);
+            var padding = new Padding(inset, (int)((shortWindow ? 12 : 20) * scale), inset, inset);
+            if (content.Padding != padding) content.Padding = padding;
             var inner = homePage.ClientSize.Width - content.Padding.Horizontal - activity.Padding.Horizontal - 20;
-            foreach (var label in new[] { presenceHint, homeHeadline, homeDetail, homeState, homeStatus, fieldsHint, homeGame })
-                SetWrap(label, inner);
+            var stacked = inner < (shortWindow ? 410 : 505) * scale * Math.Max(100, preferences.TextPercent) / 100;
+            var size = Math.Max(96, Math.Min(shortWindow ? 128 : stacked ? 156 : 248, inner));
+            homePage.SuspendLayout();
+            cardLayout.SuspendLayout();
+            cardLayout.SetCellPosition(cardText, new TableLayoutPanelCellPosition(stacked ? 0 : 1, stacked ? 1 : 0));
+            cardLayout.SetColumnSpan(homeLarge, stacked ? 2 : 1);
+            cardLayout.SetColumnSpan(cardText, stacked ? 2 : 1);
+            cardText.Margin = stacked ? new Padding(0, 12, 0, 0) : new Padding(20, 0, 0, 0);
+            homeLarge.Size = new Size(size, size);
+            foreach (var label in new[] { homeHeadline, homeDetail, homeState, homeElapsed, homeStatus })
+                SetWrap(label, stacked ? inner : inner - size - 20);
+            SetWrap(fieldsHint, inner);
+            SetWrap(homeConnectionNote, inner);
+            SetWrap(homeFriend, inner - 72);
+            cardLayout.ResumeLayout();
             foreach (Control child in table.Controls)
                 if (child is Label label) SetWrap(label, inner / 2 - 8);
+            homePage.ResumeLayout();
         }
+        ResizeHome();
 
         void AddFeatureRow(string name, string enName, string when, string enWhen, bool header = false)
         {
@@ -183,21 +328,47 @@ internal sealed partial class MainForm
         }
     }
 
-    private void Navigate(string page)
+    private void Navigate(string page, bool remember = true)
     {
-        currentPage = page;
-        homePage.Visible = page == "home";
-        tripShellPage.Visible = page == "trip";
-        foreach (var (key, button) in navigation) button.SetSelected(key == currentPage);
-        ResizeShell();
+        if (page == currentPage && libraryPages.Count > 0)
+        {
+            while (libraryPages.Count > 1) GoBackInLibrary();
+            return;
+        }
+        var changedPage = currentPage != page;
+        if (changedPage && remember) AnimatePageChange(pageHost);
+        pageHost.SuspendLayout();
+        try
+        {
+            ClearLibraryPages();
+            currentPage = page;
+            UpdatePageTitle();
+            homePage.Visible = page == "home";
+            tripShellPage.Visible = page == "trip";
+            if (page == "journal") ShowHistory();
+            if (page == "replay") ShowRecordings();
+
+            foreach (var (key, button) in navigation) button.SetSelected(key == currentPage);
+            ResizeShell();
+        }
+        finally { pageHost.ResumeLayout(true); }
+        UpdateReplayVisibility();
+        if (remember && page is "home" or "trip" && preferences.Features.LastSection != page)
+            RememberLandingPage(page);
     }
 
     private void ResizeShell()
     {
         if (appShell.ColumnStyles.Count == 0) return;
         var scale = DeviceDpi / 96f;
-        var collapsed = ClientSize.Width / scale < 750;
-        appShell.ColumnStyles[0].Width = fullScreen ? 0 : (collapsed ? 56 : 200) * scale;
+        var collapsed = preferences.Features.SidebarSize switch
+        {
+            "compact" => true,
+            "full" => false,
+            _ => ClientSize.Width / scale < 750 + Math.Max(0, preferences.TextPercent - 100) * 3
+        };
+        var sidebarWidth = fullScreen ? 0 : (collapsed ? 56 : 200) * scale;
+        if (Math.Abs(appShell.ColumnStyles[0].Width - sidebarWidth) > .5f) appShell.ColumnStyles[0].Width = sidebarWidth;
         if (narrowShell == collapsed) return;
         narrowShell = collapsed;
         foreach (var button in navigation.Values) { button.IconsOnly = collapsed; button.Invalidate(); }
@@ -207,13 +378,19 @@ internal sealed partial class MainForm
 
     private void ApplyShellTheme()
     {
-        shellPalette = SystemInformation.HighContrast ? ShellPalette.System : preferences.Theme switch
+        if (Visible) AnimatePageChange(pageHost, UiMotion.Slow);
+        shellPalette = SystemInformation.HighContrast ? ShellPalette.System : (preferences.Theme switch
         {
             "day" => ShellPalette.Day, "night" => ShellPalette.Dark,
             _ => Application.SystemColorMode == SystemColorMode.Dark ? ShellPalette.Dark : ShellPalette.Day
-        };
+        }).WithAccent(preferences.Features.AccentPreset);
+        BackColor = shellPalette.Canvas;
         PaintShell(appShell);
         sidebar.BackColor = shellPalette.Surface;
+        if (currentTripBar is not null) currentTripBar.BackColor = shellPalette.Elevated;
+        trayMenu.BackColor = shellPalette.Elevated;
+        trayMenu.ForeColor = shellPalette.Text;
+        foreach (ToolStripItem item in trayMenu.Items) item.ForeColor = shellPalette.Text;
         pageHost.BackColor = homePage.BackColor = scroll.BackColor = shellPalette.Canvas;
         travel.BackColor = preview.BackColor = gameStatus.BackColor = discordStatus.BackColor = shellPalette.Surface;
         if (truckName.Parent is { } truckCard) truckCard.BackColor = shellPalette.Canvas;
@@ -234,14 +411,19 @@ internal sealed partial class MainForm
                 card.Palette = shellPalette;
                 card.BackColor = shellPalette.Surface;
                 break;
+            case TripMap map:
+                map.Canvas = shellPalette.Surface;
+                map.Ink = shellPalette.Text;
+                map.TrackInk = shellPalette.Accent;
+                break;
+            case RouteProgress bar:
+                bar.Palette = shellPalette;
+                break;
             case ShellRule rule:
                 rule.Ink = shellPalette.Border;
                 break;
             case Button button:
-                button.BackColor = shellPalette.Surface;
-                button.ForeColor = shellPalette.Text;
-                button.FlatAppearance.BorderColor = shellPalette.Border;
-                button.FlatAppearance.MouseOverBackColor = shellPalette.Hover;
+                StyleButton(button);
                 break;
             case Label label:
                 label.ForeColor = Equals(label.Tag, "muted") ? shellPalette.Muted : shellPalette.Text;
@@ -266,8 +448,12 @@ internal sealed partial class MainForm
             : shellGameOpen ? L("ETS2 abierto", "ETS2 running") : L("ETS2 cerrado", "ETS2 closed");
         var discord = !hasShellStatus ? L("Buscando Discord", "Checking Discord")
             : shellDiscordReady ? L("Discord conectado", "Discord connected") : L("Discord sin conexión", "Discord offline");
-        sidebarGame.Text = narrowShell ? "●" : $"●  {game}";
-        sidebarDiscord.Text = narrowShell ? "●" : $"●  {discord}";
+        var iconsOnly = sidebar.ClientSize.Width > 0 && sidebar.ClientSize.Width < 100 * DeviceDpi / 96f;
+        sidebarGame.Text = iconsOnly ? "●" : $"●  {game}";
+        sidebarDiscord.Text = iconsOnly ? "●" : $"●  {discord}";
+        var labelWidth = (int)(176 * DeviceDpi / 96f);
+        SetWrap(sidebarGame, labelWidth);
+        SetWrap(sidebarDiscord, labelWidth);
         shellTips.SetToolTip(sidebarGame, game);
         shellTips.SetToolTip(sidebarDiscord, discord);
         sidebarGame.AccessibleName = game;
@@ -278,11 +464,14 @@ internal sealed partial class MainForm
 
     private void SyncHomeArt()
     {
-        homeLarge.Image = previewLarge.Image;
-        homeBadge.Image = previewBadge.Image;
-        homeLarge.Visible = homeLarge.Image is not null;
-        homeBadge.Visible = homeBadge.Image is not null;
-        homeImages.Visible = homeLarge.Image is not null || homeBadge.Image is not null;
+        AnimateArtwork(previewLarge.Image);
+        homeLarge.Image = compactArtwork.Image = previewLarge.Image;
+        homeLarge.Visible = homeLarge.Image is not null || previewImageKey is not null;
+        if (quickArtwork is { } floating)
+        {
+            floating.Image = previewLarge.Image;
+            floating.Visible = floating.Image is not null;
+        }
     }
 
     private void RenderHomePresence(PresenceText? shown, PresenceText? outgoing, string? age)
@@ -291,18 +480,83 @@ internal sealed partial class MainForm
         shellGameOpen = gameRunning;
         shellDiscordReady = discordReady;
         UpdateShellLabels();
-        homeGame.Text = guidance.Text;
+        var previousGame = homeGame.Text;
+        var previousDiscord = homeDiscord.Text;
+        homeGame.Text = liveSnapshot is not null ? L("✓ ETS2 conectado", "✓ ETS2 connected")
+            : gameRunning ? L("◌ ETS2 esperando la partida", "◌ ETS2 waiting for a session") : L("○ ETS2 cerrado", "○ ETS2 closed");
+        homeDiscord.Text = discordReady ? L("✓ Discord conectado", "✓ Discord connected")
+            : discordWasReady ? L("◌ Discord reconectando", "◌ Discord reconnecting") : L("○ Discord desconectado", "○ Discord offline");
+        homeGame.ForeColor = liveSnapshot is not null ? shellPalette.Success : shellPalette.Muted;
+        homeDiscord.ForeColor = discordReady ? shellPalette.Success : shellPalette.Muted;
+        if (previousGame != homeGame.Text) AnimateText(homeGame, shellPalette.Accent);
+        if (previousDiscord != homeDiscord.Text) AnimateText(homeDiscord, shellPalette.Accent);
+        homeTrip.Text = L("Ver viaje", "View trip");
+        homeTrip.Visible = liveSnapshot is not null;
+        homeAction.Text = !preferences.Sharing ? L("Reanudar publicación", "Resume publishing")
+            : !gameRunning ? L("Abrir ETS2", "Launch ETS2")
+            : restartNeeded ? L("Cómo reiniciar ETS2", "How to restart ETS2")
+            : liveSnapshot is null && (setupError is not null || preferences.ReaderDisabled) ? L("Revisar lector", "Check reader")
+            : L("Abrir Discord", "Open Discord");
+        homeAction.Visible = !preferences.Sharing || !gameRunning || !discordReady
+            || liveSnapshot is null && (restartNeeded || setupError is not null || preferences.ReaderDisabled);
+        homeArtNote.Text = shown?.Image is not null ? homeArtworkNote ?? "" : "";
+        homeArtNote.Visible = homeArtNote.Text.Length > 0;
         homeHeadline.Text = shown is null ? L("Sin actividad publicada", "No activity published") : DiscordIdentity.ActivityName;
         homeDetail.Text = shown?.Details ?? "";
         homeDetail.Visible = shown is not null;
         homeState.Text = shown?.State ?? "";
         homeState.Visible = shown is not null && homeState.Text.Length > 0;
-        var note = outgoing is not null ? (discordConfirmed ? L("Confirmada por Discord", "Confirmed by Discord")
+        var note = outgoing is not null ? (discordConfirmed ? L("Texto confirmado por Discord", "Text acknowledged by Discord")
             : L("Enviada a Discord", "Sent to Discord"))
             : shown is not null ? L("Vista previa local", "Local preview")
             : !preferences.Sharing ? L("Publicación en pausa", "Publishing paused")
-            : L("La actividad aparecerá cuando ETS2 y Discord estén conectados.", "Activity appears when ETS2 and Discord are connected.");
-        homeStatus.Text = age is null ? note : $"{note}  ·  {age}";
+            : !gameRunning ? L("ETS2 está cerrado", "ETS2 is closed")
+            : liveSnapshot is null ? L("Esperando una partida", "Waiting for a game session")
+            : L("Esperando Discord", "Waiting for Discord");
+        homeStatus.Text = note;
+        homeElapsed.Text = age is null ? "" : L($"Tiempo transcurrido  {age}", $"Elapsed  {age}");
+        homeElapsed.Visible = age is not null;
+        homeFriend.Text = shown is null ? L("Sin actividad visible", "No visible activity")
+            : CompactActivity(shown);
+        var fullActivity = shown is null ? "" : $"{shown.Details} · {shown.State}";
+        if (shellTips.GetToolTip(homeFriend) != fullActivity) shellTips.SetToolTip(homeFriend, fullActivity);
+        homeConnectionNote.Text = setupError ?? (restartNeeded
+            ? L("Cierra y vuelve a abrir ETS2 para activar el lector.", "Close and reopen ETS2 to activate the reader.")
+            : preferences.ReaderDisabled ? L("El lector está desactivado en Ajustes.", "The reader is disabled in Settings.")
+            : gameRunning && liveSnapshot is null
+            ? L("Entra a una partida para recibir los datos de ETS2.", "Enter a game session to receive ETS2 data.")
+            : !gameRunning ? L("Abre ETS2 para empezar.", "Launch ETS2 to begin.")
+            : !discordReady ? L("Abre Discord de escritorio para compartir tu actividad.", "Open Discord desktop to share your activity.") : "");
+    }
+
+    private static string CompactActivity(PresenceText activity) =>
+        $"{DiscordIdentity.ActivityName}  ·  {CompactLine(activity.Details)}";
+
+    private static string CompactLine(string value)
+    {
+        var elements = System.Globalization.StringInfo.ParseCombiningCharacters(value);
+        return elements.Length <= 42 ? value : value[..elements[41]].TrimEnd() + "…";
+    }
+
+    private sealed class HeadingLabel : Label
+    {
+        public HeadingLabel()
+        {
+            Font = new Font("Segoe UI", 23, FontStyle.Bold);
+            Dock = DockStyle.Fill;
+            AutoSize = true;
+            AccessibleRole = AccessibleRole.StaticText;
+            SetStyle(ControlStyles.Selectable, true);
+            TabStop = false;
+
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Focused && ShowFocusCues)
+                ControlPaint.DrawFocusRectangle(e.Graphics, ClientRectangle);
+        }
     }
 
     private void ShowAbout()
@@ -322,9 +576,24 @@ internal sealed partial class MainForm
 
     private sealed record ShellPalette(Color Canvas, Color Surface, Color Border, Color Text, Color Muted, Color Hover, Color Accent, bool Light)
     {
-        public static ShellPalette Dark { get; } = new(Color.FromArgb(19, 22, 29), Color.FromArgb(24, 28, 37),
-            Color.FromArgb(44, 50, 64), Color.FromArgb(240, 243, 249), Color.FromArgb(165, 179, 203),
-            Color.FromArgb(36, 43, 58), Color.FromArgb(147, 186, 250), false);
+        public Color Elevated => SystemInformation.HighContrast ? Surface : UiMotion.Blend(Surface, Text, Light ? .025 : .045);
+        public Color Error => SystemInformation.HighContrast ? Text : Light ? Color.FromArgb(153, 33, 39) : Color.FromArgb(250, 133, 135);
+        public Color Discord => SystemInformation.HighContrast ? Text : Light ? Color.FromArgb(63, 69, 182) : Color.FromArgb(161, 168, 255);
+        public ShellPalette WithAccent(string preset) => this with
+        {
+            Accent = preset switch
+            {
+                "blue" => Discord,
+                "green" => Success,
+                _ => Light ? Color.FromArgb(134, 78, 13) : Color.FromArgb(245, 185, 91)
+            }
+        };
+        public Color OnAccent => SystemInformation.HighContrast ? SystemColors.HighlightText : Light ? Color.White : Color.FromArgb(15, 25, 41);
+        public Color Success => SystemInformation.HighContrast ? Text : Light ? Color.FromArgb(23, 104, 76) : Color.FromArgb(117, 209, 159);
+        public Color Warning => SystemInformation.HighContrast ? Text : Light ? Color.FromArgb(135, 79, 19) : Color.FromArgb(249, 192, 106);
+        public static ShellPalette Dark { get; } = new(Color.FromArgb(23, 24, 27), Color.FromArgb(32, 34, 38),
+            Color.FromArgb(67, 70, 76), Color.FromArgb(246, 242, 233), Color.FromArgb(178, 184, 194),
+            Color.FromArgb(47, 50, 56), Color.FromArgb(245, 185, 91), false);
         public static ShellPalette Day { get; } = new(Color.FromArgb(243, 246, 250), Color.White,
             Color.FromArgb(207, 216, 231), Color.FromArgb(25, 35, 54), Color.FromArgb(71, 88, 116),
             Color.FromArgb(226, 234, 248), Color.FromArgb(40, 88, 160), true);
@@ -344,7 +613,7 @@ internal sealed partial class MainForm
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
             ColumnCount = 1;
             Dock = DockStyle.Top;
-            Padding = new Padding(22, 15, 22, 17);
+            Padding = new Padding(24, 16, 24, 16);
             Margin = new Padding(0, 0, 0, 18);
         }
 
@@ -355,9 +624,12 @@ internal sealed partial class MainForm
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var path = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 15);
             using var fill = new SolidBrush(Palette.Surface);
-            using var border = new Pen(Palette.Border);
             e.Graphics.FillPath(fill, path);
-            e.Graphics.DrawPath(border, path);
+            if (SystemInformation.HighContrast)
+            {
+                using var border = new Pen(Palette.Border);
+                e.Graphics.DrawPath(border, path);
+            }
         }
     }
 
@@ -381,6 +653,8 @@ internal sealed partial class MainForm
         private readonly Bitmap icon;
         private readonly Font labelFont = new("Segoe UI", 10.5f);
         private bool selected;
+        internal Func<UiMotion>? SelectionMotion;
+        private double selectionAmount;
         private bool hovered;
         public bool IconsOnly;
         public ShellPalette Palette = ShellPalette.Dark;
@@ -399,8 +673,22 @@ internal sealed partial class MainForm
 
         public void SetSelected(bool value)
         {
+            if (selected == value) return;
             selected = value;
-            Invalidate();
+            var target = value ? 1d : 0d;
+            var previous = selectionAmount;
+            if (SelectionMotion is not { } motion)
+            {
+                selectionAmount = target;
+                Invalidate();
+                return;
+            }
+            motion().Run(this, this, UiMotion.Normal, amount =>
+            {
+                if (IsDisposed) return;
+                selectionAmount = previous + (target - previous) * amount;
+                Invalidate();
+            });
         }
 
         protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hovered = true; Invalidate(); }
@@ -414,11 +702,21 @@ internal sealed partial class MainForm
             var g = e.Graphics;
             g.Clear(Palette.Surface);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            if (selected || hovered)
+            if (selectionAmount > 0 || hovered)
             {
                 using var plate = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 8);
-                using var brush = new SolidBrush(Palette.Hover);
+                using var brush = new SolidBrush(hovered ? Palette.Hover : UiMotion.Blend(Palette.Surface, Palette.Hover, selectionAmount));
                 g.FillPath(brush, plate);
+            }
+            if (selected)
+            {
+                using var active = new SolidBrush(Palette.Accent);
+                if (IconsOnly && Width < 50)
+                {
+                    using var ring = new Pen(Palette.Accent, 1.5f);
+                    g.DrawRectangle(ring, Rectangle.Inflate(ClientRectangle, -2, -2));
+                }
+                else g.FillRectangle(active, 1, Height / 4, Math.Max(1, DeviceDpi / 96), Height / 2);
             }
             var iconBox = IconsOnly ? ClientRectangle : new Rectangle(5, 0, 32, Height);
             var side = Math.Max(1, Math.Min(iconBox.Width, (int)Math.Round(21 * DeviceDpi / 96d)));

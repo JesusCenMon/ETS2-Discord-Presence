@@ -1,78 +1,167 @@
+<p align="center">
+  <img src="docs/images/logo.png" width="96" height="96" alt="ETS2 Discord Presence truck emblem">
+</p>
+
 # ETS2 Discord Presence
 
-Muestra en Discord qué estás haciendo en **Euro Truck Simulator 2**: entrega, ciudades de origen y destino, distancia restante y, cuando se puede estimar, una ciudad cercana. Si no tienes una entrega, muestra «Explorando libremente» y, cuando la ubicación se puede estimar, «Conduciendo por España», «Conduciendo por Francia» o el país correspondiente.
+**Share your Euro Truck Simulator 2 journey on Discord.** Delivery routes, cargo, remaining distance and country artwork, with a Windows dashboard for your trips.
 
-## Instalar en Windows
+**English** · [Español](docs/README.es.md)
 
-1. Descarga `ETS2DiscordPresence.exe` desde [Releases](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases) y ábrelo directamente.
-2. Abre Discord de escritorio y ETS2. La aplicación encuentra el juego en Steam y prepara la conexión automáticamente.
+![ETS2 Discord Presence — a European truck on an Alpine road at dusk](docs/images/banner.png)
 
-Puedes minimizar la aplicación y recuperarla desde el icono junto al reloj. Si ETS2 ya estaba abierto durante la primera preparación, reinícialo para que empiece a enviar los datos. Acepta el aviso de SDK si ETS2 lo muestra. Si Windows protege la carpeta del juego, la app te indica cómo continuar.
+[![Download for Windows](https://img.shields.io/badge/Download-Windows_x64-DBA55A?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases/latest/download/ETS2DiscordPresence.exe)
+[![Latest release](https://img.shields.io/github/v/release/JesusCenMon/ETS2-Discord-Presence?color=5662D6)](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases/latest)
+[![Windows CI](https://github.com/JesusCenMon/ETS2-Discord-Presence/actions/workflows/ci.yml/badge.svg)](https://github.com/JesusCenMon/ETS2-Discord-Presence/actions/workflows/ci.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-6B8E78)](LICENSE)
 
-**Aviso:** esta aplicación se distribuye por GitHub. Los mods de ETS2 en Steam Workshop no pueden instalar y ejecutar por sí solos el componente que lee el juego. No es un mod de suscripción automática.
+[Get started](#get-started) · [Screenshots](#screenshots) · [Features](#features) · [Troubleshooting](#troubleshooting) · [Contribute](CONTRIBUTING.md)
 
-## Qué muestra
+## Get started
 
-- En una entrega: carga, origen, destino y kilómetros restantes.
-- Sin entrega: exploración libre.
-- Ciudad cercana: una **estimación**, calculada con una lista de ciudades del mapa base. Puede faltar en expansiones y mapas modificados; entonces la aplicación omite la ciudad.
-- En pausa: indica que el juego está en pausa.
-- El panel muestra la llegada estimada según el reloj de ETS2 y el progreso cuando el juego facilita una ruta y una distancia planificada. Un cambio de destino en el navegador del juego puede cambiar la estimación.
+1. **[Download ETS2DiscordPresence.exe](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases/latest/download/ETS2DiscordPresence.exe)** and open it.
+2. Open **Discord desktop** and **Euro Truck Simulator 2**.
+3. Load a profile and start driving. The app finds the Steam installation and prepares the bundled telemetry readers automatically.
 
-Desde **Apariencia**, **Comportamiento** y **Avanzado** puedes abrir los ajustes para ordenar los datos de Discord y previsualizarlos, guardar un perfil de publicación, elegir el idioma del panel y de la actividad por separado y cambiar el tema. También puedes ordenar los paneles, elegir cuáles mostrar y activar la vista compacta. **Más opciones → Segundo monitor** mueve el panel a otra pantalla si hay una disponible. Usa Escape para volver a la ventana. Puedes ajustar el tamaño del texto por separado. Cambia el tema del panel desde los botones al pie de la barra lateral. Las ventanas nativas aplican la selección al volver a abrir la app.
+**One executable. No separate .NET or plugin download.** Keep the app running while you play. You can minimize it to the Windows notification area.
 
-El mapa muestra posiciones aproximadas, el destino y el recorrido observado durante la sesión. Arrastra o usa las flechas para moverlo. Usa la rueda o los botones para acercar y alejar, y pulsa «Centrar» para volver a la vista inicial. Puedes importar un catálogo de mapas modificados en **Ajustes → Juego**. El JSON debe contener una lista `citiesList` con los campos `realName`, `x` y `z`. El campo opcional `gameName` permite localizar destinos por su identificador de ETS2.
+If ETS2 was already running during the first setup, restart the game to load its reader. Accept the SDK notice if ETS2 displays one. If Windows prevents writing to the game folder, follow the app's setup message.
 
-**Diario** reúne las entregas y cancelaciones detectadas. Elige o crea un conductor para guardar sus viajes por separado. Busca por ciudad, carga, etiqueta o nota, marca favoritos y exporta el resultado a CSV. Usa Ctrl para seleccionar dos filas y compararlas. El calendario resume kilómetros, entregas y tiempo al volante por semana. Las horas al volante se calculan a partir de las muestras observadas.
+| Requirement | Supported setup |
+| --- | --- |
+| Operating system | Windows 10 version 2004 or newer, or Windows 11, 64-bit |
+| Game | Euro Truck Simulator 2 on Steam, 64-bit |
+| Discord | Desktop client with activity sharing enabled |
+| Languages | English and Spanish, independently selectable for the app and Discord |
+| Distribution | GitHub release, with the runtime and readers included |
 
-**Repeticiones** permite grabar y borrar viajes locales o abrir un archivo JSONL anterior. Usa la línea de tiempo o el gráfico de velocidad para avanzar o retroceder. Puedes cambiar la velocidad y saltar a los eventos de recogida, ferry o entrega que se hayan detectado. Durante la reproducción se pausa la publicación en Discord.
+On a fresh setup the app uses Spanish for Spanish-language Windows and English for other Windows languages. Change the interface language in **Settings → Appearance**, and the activity language in **Settings → Discord**.
 
-En **Ajustes → Juego** puedes comprobar la versión y compatibilidad del lector por separado, repararlo o retirarlo con ETS2 cerrado, y activar avisos de combustible bajo. Los datos del camión aparecen cuando el juego los facilita.
+## Screenshots
 
-En **Ajustes → Datos locales** puedes crear o restaurar una copia de los diarios, ajustes y catálogos. Puedes incluir las grabaciones cerradas en una copia manual y elegir cuánto tiempo conservarlas. El modo portátil usa la carpeta `ETS2PresenceData` junto al ejecutable a partir del siguiente inicio. Al cambiar de modo puedes copiar los ajustes, diarios y catálogos antes de volver a abrir la app.
+Actual application screens with **local demonstration data**. Country, route and vehicle information depend on what ETS2 shares and your privacy settings.
 
-La pausa se guarda y también se controla desde la bandeja de Windows. «Ver viaje rápido» muestra el destino, la distancia y el estado de Discord. En **Ajustes → Privacidad** puedes elegir un atajo que oculta temporalmente la ruta y la ciudad en Discord. En **Más opciones → Tarjeta OBS** se abre una ventana independiente con la ruta y distancia. Puedes capturar esa ventana en OBS y aplicar un filtro de clave de color magenta si el método de captura muestra el borde transparente como un color sólido. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
+![Trip dashboard in English with route, progress, remaining distance and map](docs/images/trip-en.png)
 
-Al abrir la app se comprueba si hay una versión más reciente en GitHub. Cuando hay una actualización, aparece en **Más opciones**. Si la versión trae una suma de verificación, puedes descargarla e instalarla desde la app. La versión anterior queda disponible en el mismo menú si el ejecutable está en una carpeta donde puedes escribir.
+<details>
+<summary>See Home, the light theme and Settings</summary>
 
-La actividad aparece como **Euro Truck Simulator 2** en Discord. La imagen cambia su indicador según estés haciendo una entrega, explorando o en pausa, y el temporizador cuenta desde que se detecta la actividad. Ambos se pueden desactivar desde **Ajustes → Discord**. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
+**Home**
 
-## Última versión · v0.7.2
+![Home dashboard in English showing journey metrics and the Discord activity preview](docs/images/home-en.png)
 
-Mejoras de fiabilidad en telemetría, actualizaciones y OBS. El canal **Stable** muestra versiones estables. **Preview** también muestra versiones de prueba.
+**Light theme**
 
-## Novedades anteriores
+![Home dashboard with the light theme](docs/images/home-light-en.png)
 
-- **Panel.** Cambia entre Completo, Conducción y Transmisión desde Más opciones. También hay una ventana flotante, búsqueda en Ajustes, botones fijables, formato de hora, millas y avisos configurables.
-- **Mapa.** El menú del mapa incluye rumbo, seguimiento, búsqueda de ciudades, capas y recorrido completo. La escala usa unidades del mapa del juego. El aviso de ruta indica cambios grandes en la distancia o llegada estimada.
-- **Discord.** Puedes personalizar el texto y el temporizador, ocultar toda la actividad temporalmente, aplicar reglas de ubicación y usar un atajo de pausa total. La actividad usa la imagen general del juego.
-- **OBS.** En Ajustes → OBS puedes copiar una dirección local y pegarla en una fuente de navegador. Puedes elegir qué datos mostrar, tamaño, posición y texto de espera. La fuente funciona mientras la app esté abierta.
-- **Grabaciones y diario.** Activa la grabación automática por entrega o pausa una grabación manualmente. Usa Ctrl + Alt + F12 para marcar un momento mientras grabas, y abre la repetición para nombrarlo. También puedes recortar una copia, comparar dos repeticiones, consultar estadísticas mensuales por camión y mover viajes entre conductores. La papelera conserva los elementos durante 30 días.
-- **Mantenimiento.** Ajustes incluye límite de espacio y copias programadas mientras la app está abierta. La guía de conexión permite comprobar la actividad y exportar un informe sin rutas personales. Más opciones incluye la prueba local de conducción, entrega, pausa y desconexión.
+**Settings**
 
-## Problemas frecuentes
+![English settings with independent activity language and a live preview](docs/images/settings-en.png)
 
-- **No aparece ETS2:** pulsa «Buscar ETS2» y selecciona la carpeta `Euro Truck Simulator 2` dentro de tu biblioteca de Steam.
-- **No aparece la actividad:** abre Discord de escritorio y revisa que «Compartir mi actividad» esté activado.
-- **La aplicación espera datos:** entra a una partida. Si acabas de abrir la app por primera vez con ETS2 ya iniciado, reinicia el juego y acepta su aviso de SDK si aparece.
-- **Ciudad incorrecta:** la ubicación es aproximada y la lista no cubre todos los DLC ni mapas externos.
-- **Lector incompatible:** sigue la indicación del panel y abre **Ajustes → Juego**. Desde ahí puedes reparar el lector propio o copiar un diagnóstico.
+</details>
 
-## Desarrollo
+## Features
 
-Requiere .NET 10 SDK en Windows.
+| While you play | What the app adds |
+| --- | --- |
+| Delivering cargo | Cargo, origin, destination, remaining distance and estimated arrival when available |
+| Driving freely | Free driving status with the estimated country |
+| Crossing countries | Country artwork with a flag and localized country name |
+| Driving a coach | Matching coach artwork and passenger route information when available |
+| Browsing your trips | A persistent Current Trip bar that opens the trip dashboard |
+| Finishing a journey | A local journal with filters, favorites, comparisons and CSV export |
+| Recording a drive | Local replays with a timeline, speed graph, events and markers |
+| Streaming | A local OBS browser source with configurable route information |
+| Taking a break | Pause sharing, hide location or choose a privacy shortcut |
 
-El ID público de la aplicación registrada en Discord está en `DiscordIdentity.cs` y viene incluido en la descarga.
+Country covers follow a common style for trucks and coaches.
+
+| France · Truck | Germany · Truck | Iceland · Truck | France · Coach |
+| --- | --- | --- | --- |
+| ![France flag with truck and country name](assets/discord/countries/fr-en.jpg) | ![Germany flag with truck and country name](assets/discord/countries/de-en.jpg) | ![Iceland flag with truck and country name](assets/discord/countries/is-en.jpg) | ![France flag with coach and country name](assets/discord/coaches/fr-en.jpg) |
+
+The activity title in Discord is **Euro Truck Simulator 2**. The app includes dark, light and system themes, configurable accents, text scaling, a compact layout and reduced motion.
+
+### Map and photo mode
+
+Automatic map and photo recognition is **experimental**. It reads visible screen text locally and can depend on the game's language, display mode and UI layout. Enable or disable each detector in Discord settings. The tray menu also lets you choose an activity manually.
+
+Nearby cities and countries are **estimates** from the included catalog. Unsupported maps, sparse coverage and borders can affect the result. You can import a custom city catalog in Game settings.
+
+## Latest release · v0.8.6
+
+- Route-focused Home and Trip pages with available journey metrics.
+- A Current Trip bar that stays visible in Journal, Replays and Settings.
+- Configurable amber, blue and green accents, rounded buttons and animated switches.
+- Journal and replay details inside the main window, with smoother navigation.
+- English or Spanish chosen automatically on first launch, with separate activity language settings.
+
+[Full changelog](CHANGELOG.md) · [Release notes and download](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases/tag/v0.8.6)
+
+## Troubleshooting
+
+<details>
+<summary>Discord is open, but the activity does not appear</summary>
+
+Use Discord's desktop application and enable activity sharing in Discord settings. Load a game profile, check the connection status in the app, and make sure publication is enabled. A local demonstration or replay pauses live sharing. Discord can also display its own detected game activity alongside Rich Presence.
+
+</details>
+
+<details>
+<summary>The app is waiting for ETS2 data</summary>
+
+Load a profile. If you opened the app for the first time while ETS2 was already running, restart ETS2 and accept its SDK notice if shown. Use **Locate ETS2** if the Steam library was not found. Reader checks and repair are in **Settings → Game**.
+
+</details>
+
+<details>
+<summary>The country, city or cover is missing</summary>
+
+Check that sharing the country and activity image is enabled. Location is estimated from the city catalog and may be omitted near borders or outside coverage. The app has truck and coach covers in English and Spanish. Customized maps may need an imported catalog.
+
+</details>
+
+<details>
+<summary>How do I update or keep a backup?</summary>
+
+The app checks GitHub releases. You can use its update action, or close the app and replace the executable with the latest download. Back up your settings and journal in **Settings → Local data**. Portable mode keeps data in an adjacent `ETS2PresenceData` folder after restart.
+
+</details>
+
+<details>
+<summary>Can I install it through Steam Workshop?</summary>
+
+Download the Windows app from GitHub. A Workshop subscription cannot prepare and run this external Discord companion on its own.
+
+</details>
+
+Still stuck? [Ask for help](https://github.com/JesusCenMon/ETS2-Discord-Presence/discussions) or [report a reproducible bug](https://github.com/JesusCenMon/ETS2-Discord-Presence/issues/new/choose). English and Spanish are welcome.
+
+## Privacy
+
+Telemetry, journals, recordings and screen recognition are processed on your computer. Chosen activity information is sent to the local Discord client for publication. Update checks contact GitHub, and activity artwork may be fetched from GitHub. OBS uses a local address while enabled.
+
+Use privacy settings to control country, city, route and activity sharing. Before attaching logs or recordings to a public issue, remove private paths, usernames and location data you do not want to share.
+
+## Build and contribute
+
+Developers need Windows and the **.NET 10 SDK**. Players can use the release executable directly.
 
 ```powershell
+git clone https://github.com/JesusCenMon/ETS2-Discord-Presence.git
+cd ETS2-Discord-Presence
 dotnet test tests/Ets2DiscordPresence.Tests/Ets2DiscordPresence.Tests.csproj -c Release
-./scripts/build-release.ps1
+./scripts/build-release.ps1 -Tag v0.8.6
 ```
 
-El script verifica la versión, el tag de los recursos de Discord y el encabezado del README. Ejecuta la suite antes de generar el ejecutable y su archivo SHA-256 en `dist/standalone`.
+The script runs the existing tests, publishes a self-contained executable to `dist/standalone` and checks its bundled resources. See [CONTRIBUTING](CONTRIBUTING.md) for development, translation and release checks.
 
-## Alcance y créditos
+Useful contributions include reproducible bug reports, English/Spanish wording improvements, city catalog corrections and screenshots from different Windows display scales. If the app helps your driving sessions, a star or a link shared with your trucking community helps others find it.
 
-La aplicación lee los datos en el equipo y se comunica con Discord de escritorio. El ejecutable incluye el lector de la [versión V.1.12.1 de RenCloud](https://github.com/RenCloud/scs-sdk-plugin/releases/tag/V.1.12.1) y un catálogo de 400 puntos urbanos. Conserva nombres e identificadores de [ETS2-City-Coordinate-Retriever](https://github.com/Koenvh1/ETS2-City-Coordinate-Retriever) y añade posiciones y países del [mapa de Trucker Mudgeon](https://github.com/truckermudgeon/truckermudgeon.github.io/blob/559c5fa5a84189e48f637e84d79832841966a073/ets2-search.geojson). La posición del país se estima a partir de las ciudades, por lo que se omite en lugares sin cobertura o con señales ambiguas cerca de fronteras. Los catálogos personalizados pueden añadir el campo `country` con códigos como `ES` o `PT`. Sus avisos de licencia están disponibles desde el menú del icono junto al reloj.
+## Credits and license
 
-Probado mediante compilación y pruebas automáticas; la lectura en una partida real de ETS2 y la visualización en una cuenta de Discord requieren validación en una máquina con el juego y Discord abiertos.
+Created by **[JesusCenMon](https://github.com/JesusCenMon)**. Released under the [MIT license](LICENSE). This is an independent community project.
+
+Includes [RenCloud's SCS telemetry plugin](https://github.com/RenCloud/scs-sdk-plugin/releases/tag/V.1.12.1), Microsoft [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons), SCS SDK components, city data from [Koenvh1](https://github.com/Koenvh1/ETS2-City-Coordinate-Retriever) and [Trucker Mudgeon](https://github.com/truckermudgeon/truckermudgeon.github.io), and country flags from [Flagpedia](https://flagpedia.net/download). See [third-party notices](docs/THIRD_PARTY_NOTICES.md).
+
+Euro Truck Simulator 2, Steam and Discord belong to their respective owners. Artwork is illustrative. This project is not affiliated with SCS Software, Valve or Discord.

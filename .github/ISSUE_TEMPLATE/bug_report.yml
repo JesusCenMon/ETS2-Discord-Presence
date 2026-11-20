@@ -1,0 +1,39 @@
+name: Bug report / Informar un error
+description: Report a reproducible problem in English or Spanish.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "English and Spanish are welcome. Remove personal information from logs and screenshots. / Puedes escribir en español. Elimina los datos personales."
+  - type: input
+    id: app
+    attributes:
+      label: App version / Versión de la app
+      placeholder: v0.8.6
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Windows and ETS2 versions / Versiones de Windows y ETS2
+      placeholder: Windows 11, ETS2 version, DLC or custom map if relevant
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / Pasos para repetirlo
+      description: Include what you clicked and whether ETS2 and Discord were running.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior / Qué esperabas y qué ocurrió
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or diagnostics / Capturas o diagnóstico
+      description: For UI issues include theme, display scaling and window size. Attach only data you are comfortable making public.

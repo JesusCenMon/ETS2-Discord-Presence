@@ -7,6 +7,19 @@ namespace Ets2DiscordPresence.Tests;
 public sealed class TelemetryTests
 {
     [Fact]
+    public void DeliveredRevenueIsOnlyReadWhenTheGameReportsDelivery()
+    {
+        var bytes = new byte[4400];
+        bytes[0] = 1;
+        BitConverter.GetBytes(12U).CopyTo(bytes, 40);
+        BitConverter.GetBytes(1U).CopyTo(bytes, 52);
+        BitConverter.GetBytes(45000L).CopyTo(bytes, 4208);
+        Assert.Null(TelemetryReader.Parse(bytes)?.Signals?.Revenue);
+        bytes[4303] = 1;
+        Assert.Equal(45000L, TelemetryReader.Parse(bytes)?.Signals?.Revenue);
+    }
+
+    [Fact]
     public void PreparesGameFromBundledReaderAndLeavesExistingFilesAlone()
     {
         var game = Directory.CreateTempSubdirectory("ets2-presence-test-");
@@ -16,8 +29,10 @@ public sealed class TelemetryTests
             File.WriteAllBytes(Path.Combine(binary.FullName, "eurotrucks2.exe"), []);
             Assert.True(PluginInstaller.Prepare(game.FullName));
             Assert.False(PluginInstaller.Prepare(game.FullName));
-            var plugin = Assert.Single(Directory.GetFiles(Path.Combine(binary.FullName, "plugins")));
-            Assert.True(new FileInfo(plugin).Length > 0);
+            var plugins = Directory.GetFiles(Path.Combine(binary.FullName, "plugins"));
+            Assert.Equal(2, plugins.Length);
+            Assert.All(plugins, pluginPath => Assert.True(new FileInfo(pluginPath).Length > 0));
+            var plugin = Assert.Single(plugins, path => Path.GetFileName(path) == "ets2-discord-telemetry.dll");
             File.WriteAllText(plugin, "existing file");
             Assert.Throws<IOException>(() => PluginInstaller.Prepare(game.FullName));
             Assert.Equal("existing file", File.ReadAllText(plugin));

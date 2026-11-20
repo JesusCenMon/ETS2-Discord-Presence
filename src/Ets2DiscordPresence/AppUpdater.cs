@@ -15,7 +15,7 @@ internal static class AppUpdater
     private static string Pending(string executable) => executable + ".pending.exe";
     private static string ErrorFile(string executable) => executable + ".update-error.txt";
 
-    public static async Task DownloadAsync(AppUpdate update, string executable, CancellationToken cancellation)
+    public static async Task DownloadAsync(AppUpdate update, string executable, CancellationToken cancellation, IProgress<(long Received, long? Total)>? progress = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
@@ -27,12 +27,14 @@ internal static class AppUpdater
         {
             using var response = await Client.GetAsync(update.Url, HttpCompletionOption.ResponseHeadersRead, cancellation);
             response.EnsureSuccessStatusCode();
-            ValidateSize(response.Content.Headers.ContentLength ?? 0);
+            var total = response.Content.Headers.ContentLength;
+            ValidateSize(total ?? 0);
             await using (var source = await response.Content.ReadAsStreamAsync(cancellation))
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
             {
                 var buffer = new byte[81920];
                 long written = 0;
+                var reportedAt = Environment.TickCount64;
                 while (true)
                 {
                     var read = await source.ReadAsync(buffer, cancellation);
@@ -40,6 +42,11 @@ internal static class AppUpdater
                     written += read;
                     ValidateSize(written);
                     await output.WriteAsync(buffer.AsMemory(0, read), cancellation);
+                    if (progress is not null && Environment.TickCount64 - reportedAt >= 100)
+                    {
+                        progress.Report((written, total));
+                        reportedAt = Environment.TickCount64;
+                    }
                 }
             }
             VerifyFile(temporary, update.Sha256);

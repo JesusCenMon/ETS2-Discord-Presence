@@ -1,0 +1,20 @@
+name: Feature request / Proponer una mejora
+description: Suggest an improvement in English or Spanish.
+title: "[Idea] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would this help with? / ¿Qué problema resolvería?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / Cómo debería funcionar
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Examples or screenshots / Ejemplos o capturas

@@ -11,7 +11,28 @@ internal sealed class TripMap : Control
     private MapCity? focusCity;
     private (double X, double Z)? fixedCenter;
     private bool fitTrail;
+    internal UiMotion? Motion;
+    private readonly object zoomMotion = new();
+    private readonly object markerMotion = new();
+    private readonly object positionMotion = new();
+    private double zoomTarget = 1;
+    private double markerPulse;
+    private (double X, double Z)? visibleTruck;
     private double bearing;
+    private (TelemetrySnapshot Position, string Symbol)? highlightedReplayEvent;
+
+    public void HighlightReplayEvent(TelemetrySnapshot? position, string? symbol)
+    {
+        highlightedReplayEvent = position is not null && symbol is not null ? (position, symbol) : null;
+        if (highlightedReplayEvent is not null) PulseMarker();
+        Invalidate();
+    }
+
+    internal static string EventSymbol(string? kind) => kind switch
+    {
+        "pickup" => "↑", "delivery" => "✓", "fuel" => "+", "rest" => "Ⅱ", "ferry" => "≈",
+        "route_changed" => "↻", string value when value.StartsWith("border:", StringComparison.Ordinal) => "⚑", _ => "◆"
+    };
     private bool headingUp;
     private bool follow;
     private bool colorSpeed;
@@ -49,6 +70,7 @@ internal sealed class TripMap : Control
     {
         Recenter();
         focusCity = city;
+        PulseMarker();
         Invalidate();
     }
 
@@ -94,38 +116,96 @@ internal sealed class TripMap : Control
     private bool interrupted = true;
     private bool english;
     private bool light;
+    internal Color Canvas;
+    internal Color Ink;
+    internal Color TrackInk;
     private string? tripKey;
     private double zoom = 1;
+    private Func<double, double, PointF>? lastProjection;
+
+    public long? ReplayTimeNear(Point cursor, IReadOnlyList<RecordedFrame> frames, int lastIndex)
+    {
+        if (lastProjection is not { } project || !showTrack) return null;
+        var nearest = 14f * 14f;
+        long? time = null;
+        for (var index = 0; index <= lastIndex && index < frames.Count; index++)
+        {
+            if (frames[index].Trip is not { } trip || !double.IsFinite(trip.X) || !double.IsFinite(trip.Z)) continue;
+            var point = project(trip.X, trip.Z);
+            var dx = point.X - cursor.X;
+            var dy = point.Y - cursor.Y;
+            var squared = dx * dx + dy * dy;
+            if (squared >= nearest) continue;
+            nearest = squared;
+            time = frames[index].ElapsedMs;
+        }
+        return time;
+    }
     private PointF pan;
     private Point dragStart;
     private bool dragging;
+    private bool manuallyPanned;
 
     public void Recenter()
     {
-        zoom = 1;
+        SetZoom(1);
+        follow = true;
         pan = PointF.Empty;
         fixedCenter = null;
         focusCity = null;
         fitTrail = false;
+        manuallyPanned = false;
         Invalidate();
     }
 
     public void Zoom(double factor)
     {
-        zoom = Math.Clamp(zoom * factor, .35, 10);
-        Invalidate();
+        SetZoom(Math.Clamp(zoomTarget * factor, .35, 10));
     }
+
+    private void SetZoom(double target)
+    {
+        zoomTarget = target;
+        var start = zoom;
+        if (Motion is null) { zoom = target; Invalidate(); return; }
+        Motion.Run(zoomMotion, this, 200, value =>
+        {
+            if (IsDisposed) return;
+            zoom = start + (target - start) * value;
+            Invalidate();
+        });
+    }
+
+    private void PulseMarker()
+    {
+        Motion?.Run(markerMotion, this, 430, value =>
+        {
+            if (IsDisposed) return;
+            markerPulse = 1 - value;
+            Invalidate();
+        });
+    }
+
+    private IReadOnlyList<RecordedFrame>? replayFrames;
+    private int replayThrough = -1;
+    private TelemetrySnapshot? previousReplaySample;
 
     public void ShowReplayTrail(IReadOnlyList<RecordedFrame> frames, int index)
     {
-        trail.Clear();
-        interrupted = true;
-        TelemetrySnapshot? previous = null;
-        for (var at = 0; at <= index; at++)
+        if (!ReferenceEquals(frames, replayFrames) || index <= replayThrough || trail.Count == 0)
+        {
+            trail.Clear();
+            interrupted = true;
+            replayFrames = frames;
+            replayThrough = -1;
+            previousReplaySample = null;
+        }
+
+        for (var at = replayThrough + 1; at <= index; at++)
         {
             var frame = frames[at];
-            var marker = frame.Marker is { Length: > 0 } ? "marker" : TelemetryReplay.DetectEvents(frame.Trip, previous).LastOrDefault();
-            previous = frame.Trip;
+            var marker = frame.Marker is { Length: > 0 } ? "marker" : frame.Event ?? TelemetryReplay.DetectEvents(frame.Trip, previousReplaySample).LastOrDefault();
+            previousReplaySample = frame.Trip;
             if (frame.Trip is not { Paused: false } point || !double.IsFinite(point.X) || !double.IsFinite(point.Z)
                 || Math.Abs(point.X) > 2_000_000 || Math.Abs(point.Z) > 2_000_000)
             {
@@ -142,6 +222,7 @@ internal sealed class TripMap : Control
                 }
             }
         }
+        replayThrough = index;
         Invalidate();
     }
 
@@ -159,6 +240,7 @@ internal sealed class TripMap : Control
         else if (delta != Point.Empty)
         {
             SuspendFollowing();
+            manuallyPanned = true;
             pan = new(pan.X + delta.X, pan.Y + delta.Y);
             Invalidate();
         }
@@ -180,8 +262,9 @@ internal sealed class TripMap : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (!dragging) return;
+        if (!dragging || dragStart == e.Location) return;
         SuspendFollowing();
+        manuallyPanned = true;
         pan = new(pan.X + e.X - dragStart.X, pan.Y + e.Y - dragStart.Y);
         dragStart = e.Location;
         Invalidate();
@@ -222,16 +305,18 @@ internal sealed class TripMap : Control
     {
         truck = position is { } value && double.IsFinite(value.X) && double.IsFinite(value.Z)
             && Math.Abs(value.X) <= 2_000_000 && Math.Abs(value.Z) <= 2_000_000 ? value : null;
+        visibleTruck = null;
         Invalidate();
     }
 
-    public void UpdateMap(TelemetrySnapshot? snapshot, CityLookup catalog, bool isEnglish, bool isLight, bool demo, bool repaint = true)
+    public void UpdateMap(TelemetrySnapshot? snapshot, CityLookup catalog, bool isEnglish, bool isLight, bool demo, bool repaint = true, string? eventKind = null)
     {
         english = isEnglish;
         light = isLight;
         cities = catalog.Cities;
         var key = demo ? "demo" : snapshot?.OnJob == true ? snapshot.Signals?.JobKey + snapshot.Signals?.Deadline : "free";
-        if (snapshot is not null && key != tripKey)
+        var startedNewTrip = snapshot is not null && key != tripKey;
+        if (startedNewTrip)
         {
             trail.Clear();
             interrupted = true;
@@ -240,9 +325,29 @@ internal sealed class TripMap : Control
 
         truck = snapshot is { } value && double.IsFinite(value.X) && double.IsFinite(value.Z)
             && Math.Abs(value.X) <= 2_000_000 && Math.Abs(value.Z) <= 2_000_000 ? value : null;
+        if (Motion is null || !repaint || truck is not { Paused: false } moving || replayFrames is not null)
+            visibleTruck = null;
+        else
+        {
+            var target = (moving.X, moving.Z);
+            var start = visibleTruck ?? (previousSample is { } prior ? (prior.X, prior.Z) : target);
+            if (Math.Abs(start.X - target.X) + Math.Abs(start.Z - target.Z) > 250 || startedNewTrip)
+                start = target;
+            if (start == target)
+            {
+                Motion.Complete(positionMotion);
+                visibleTruck = target;
+            }
+            else Motion.Run(positionMotion, this, 340, amount =>
+            {
+                if (IsDisposed || truck != moving) return;
+                visibleTruck = (start.X + (target.X - start.X) * amount, start.Z + (target.Z - start.Z) * amount);
+                Invalidate();
+            });
+        }
         origin = truck?.OnJob == true ? catalog.FindDestination(truck.SourceCity, null) : null;
         destination = truck?.OnJob == true ? catalog.FindDestination(truck.DestinationCity, truck.Signals?.DestinationId) : null;
-        var marker = TelemetryReplay.DetectEvents(truck, previousSample).LastOrDefault();
+        var marker = eventKind ?? TelemetryReplay.DetectEvents(truck, previousSample).LastOrDefault();
         previousSample = truck;
         if (truck is null) interrupted = true;
         else if (!truck.Paused && !demo)
@@ -260,29 +365,35 @@ internal sealed class TripMap : Control
         if (repaint) Invalidate();
     }
 
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        var background = light ? SystemColors.Window : Control.DefaultBackColor;
-        var label = Control.DefaultForeColor;
-        var accent = light && !SystemInformation.HighContrast ? SystemColors.HotTrack : label;
+        var background = Canvas.IsEmpty ? light ? SystemColors.Window : Control.DefaultBackColor : Canvas;
+        var label = Ink.IsEmpty ? Control.DefaultForeColor : Ink;
+        var accent = TrackInk.IsEmpty ? light && !SystemInformation.HighContrast ? SystemColors.HotTrack : label : TrackInk;
         g.Clear(background);
-        if (Focused) ControlPaint.DrawFocusRectangle(g, ClientRectangle);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var grid = new Pen(Color.FromArgb(24, label));
+        using var grid = new Pen(Color.FromArgb(16, label));
         for (var x = 0; x < Width; x += 28) g.DrawLine(grid, x, 0, x, Height);
         for (var y = 0; y < Height; y += 28) g.DrawLine(grid, 0, y, Width, y);
-        var caption = english ? "Approximate trip map" : "Mapa aproximado del viaje";
+        var caption = manuallyPanned ? (english ? "Manual view · Recenter to follow" : "Vista manual · Centra para seguir")
+            : follow ? (english ? "Following vehicle" : "Siguiendo el vehículo")
+            : english ? "Approximate trip map" : "Mapa aproximado del viaje";
         TextRenderer.DrawText(g, caption, Font, new Rectangle(10, 4, Width - 20, 24), label, TextFormatFlags.EndEllipsis);
         if (truck is null && focusCity is null)
         {
-            TextRenderer.DrawText(g, english ? "Waiting for the truck's position" : "Esperando la posición del camión",
+            lastProjection = null;
+            TextRenderer.DrawText(g, english ? "The route appears when you enter a drive." : "El recorrido aparece al entrar en una partida.",
                 Font, ClientRectangle, label, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            if (Focused) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(ClientRectangle, -2, -2));
             return;
         }
 
-        var centerX = focusCity?.X ?? fixedCenter?.X ?? truck?.X ?? 0;
-        var centerZ = focusCity?.Z ?? fixedCenter?.Z ?? truck?.Z ?? 0;
+        var centerX = focusCity?.X ?? fixedCenter?.X ?? visibleTruck?.X ?? truck?.X ?? 0;
+        var centerZ = focusCity?.Z ?? fixedCenter?.Z ?? visibleTruck?.Z ?? truck?.Z ?? 0;
         var radiusX = 11_000d;
         var radiusZ = 11_000d;
         if (fitTrail && trail.Count > 0)
@@ -312,9 +423,15 @@ internal sealed class TripMap : Control
             return new((float)(Width / 2d + pan.X + (dx * cosine + dz * sine) * scale),
                 (float)(Height / 2d + pan.Y + (-dx * sine + dz * cosine) * scale));
         }
+        lastProjection = Place;
         var ruler = Math.Max(24, Math.Min(Width / 4, 80));
-        g.DrawLine(Pens.Gray, 12, Height - 31, 12 + ruler, Height - 31);
-        TextRenderer.DrawText(g, $"{ruler / scale:N0} u", Font, new Point(12, Height - 29), label);
+        using var scaleLine = new Pen(label, 1.5f);
+        using var scaleBacking = new SolidBrush(background);
+        g.FillRectangle(scaleBacking, 7, Height - 39, ruler + 24, 35);
+        g.DrawLine(scaleLine, 12, Height - 31, 12 + ruler, Height - 31);
+        g.DrawLine(scaleLine, 12, Height - 35, 12, Height - 28);
+        g.DrawLine(scaleLine, 12 + ruler, Height - 35, 12 + ruler, Height - 28);
+        TextRenderer.DrawText(g, $"{ruler / scale:N0} u", Font, new Point(12, Height - 27), label);
         var north = new PointF(Width - 24, 38);
         using var compass = new Pen(label, 2) { EndCap = LineCap.ArrowAnchor };
         var tip = new PointF(north.X - (float)sine * 14, north.Y - (float)cosine * 14);
@@ -322,33 +439,70 @@ internal sealed class TripMap : Control
         TextRenderer.DrawText(g, "N", Font, Point.Round(north), label);
 
         using var track = new Pen(accent, 2);
+        using var olderTrack = new Pen(Color.FromArgb(125, accent), 1.5f);
         using var slow = new Pen(light ? Color.DarkOrange : Color.Gold, 2);
         if (showTrack)
             for (var i = 1; i < trail.Count; i++)
                 if (!trail[i].Break)
-                    g.DrawLine(colorSpeed && trail[i].Speed is { } speed && Math.Abs(speed) < 12 ? slow : track,
+                    g.DrawLine(colorSpeed && trail[i].Speed is { } speed && Math.Abs(speed) < 12 ? slow
+                        : i < trail.Count - 32 ? olderTrack : track,
                         Place(trail[i - 1].X, trail[i - 1].Z), Place(trail[i].X, trail[i].Z));
 
-        var occupied = new List<Rectangle>();
-        void Marker(string name, PointF point, Color color, int size)
+        if (showTerminals && truck is { } currentTruck && destination is { } goalCity)
+        {
+            using var guide = new Pen(Color.FromArgb(160, label), 1.5f) { DashStyle = DashStyle.Dash };
+            g.DrawLine(guide, Place(currentTruck.X, currentTruck.Z), Place(goalCity.X, goalCity.Z));
+        }
+
+        var occupied = new List<Rectangle> { new(7, Height - 39, ruler + 24, 35), new(0, 0, Width, 24) };
+        void Marker(string name, PointF point, Color color, int size, bool priority = false, bool stop = false)
         {
             if (point.X < 8 || point.X > Width - 8 || point.Y < 30 || point.Y > Height - 10) return;
             using var brush = new SolidBrush(color);
-            g.FillEllipse(brush, point.X - size / 2f, point.Y - size / 2f, size, size);
+            if (stop) g.FillRectangle(brush, point.X - size / 2f, point.Y - size / 2f, size, size);
+            else g.FillEllipse(brush, point.X - size / 2f, point.Y - size / 2f, size, size);
             var measured = TextRenderer.MeasureText(name, Font);
             var box = new Rectangle(Math.Clamp((int)point.X + 7, 2, Math.Max(2, Width - measured.Width)),
                 Math.Max(26, (int)point.Y - measured.Height), measured.Width, measured.Height);
-            if (occupied.Any(other => other.IntersectsWith(box))) return;
+            if (occupied.Any(other => other.IntersectsWith(box)))
+            {
+                if (!priority) return;
+                box.Y = Math.Clamp((int)point.Y + 7, 26, Math.Max(26, Height - measured.Height - 6));
+            }
             using var backing = new SolidBrush(background);
-            g.FillRectangle(backing, box);
+            g.FillRectangle(backing, Rectangle.Inflate(box, 2, 1));
             TextRenderer.DrawText(g, name, Font, box, color);
             occupied.Add(box);
         }
 
-        if (truck is not null) Marker(english ? "Truck" : "Camión", Place(truck.X, truck.Z), accent, 10);
-        if (focusCity is { } selected) Marker(selected.Name, Place(selected.X, selected.Z), accent, 8);
+        if (showTerminals && destination is { } target)
+            Marker(target.Name, Place(target.X, target.Z), accent, 12, priority: true, stop: true);
         if (showTerminals && origin is { } start) Marker(start.Name, Place(start.X, start.Z), label, 8);
-        if (showTerminals && destination is { } target) Marker(target.Name, Place(target.X, target.Z), label, 8);
+        if (truck is not null)
+        {
+            var point = Place(visibleTruck?.X ?? truck.X, visibleTruck?.Z ?? truck.Z);
+            Marker(truck.Coach ? english ? "Coach" : "Autobús" : english ? "Truck" : "Camión", point, accent, 10);
+            if (ClientRectangle.Contains(Point.Round(point)))
+            {
+                using var outline = new Pen(background, 3);
+                g.DrawEllipse(outline, point.X - 5, point.Y - 5, 10, 10);
+            }
+            using var arrow = new Pen(accent, 2) { EndCap = LineCap.ArrowAnchor };
+            g.DrawLine(arrow, point, new PointF(point.X + 14 * (float)Math.Sin(bearing - angle),
+                point.Y - 14 * (float)Math.Cos(bearing - angle)));
+        }
+        void DrawPulse(PointF point)
+        {
+            if (markerPulse <= 0) return;
+            var radius = (float)(9 + 19 * (1 - markerPulse));
+            using var ring = new Pen(Color.FromArgb((int)(180 * markerPulse), accent), 2);
+            g.DrawEllipse(ring, point.X - radius, point.Y - radius, radius * 2, radius * 2);
+        }
+        if (focusCity is { } cityWithPulse) DrawPulse(Place(cityWithPulse.X, cityWithPulse.Z));
+        if (highlightedReplayEvent is { } eventWithPulse) DrawPulse(Place(eventWithPulse.Position.X, eventWithPulse.Position.Z));
+        if (focusCity is { } selected) Marker(selected.Name, Place(selected.X, selected.Z), accent, 8);
+        if (highlightedReplayEvent is { } highlight)
+            Marker(highlight.Symbol, Place(highlight.Position.X, highlight.Position.Z), accent, 13, priority: true);
         if (showEvents)
             foreach (var point in trail.Where(point => point.Event is not null).TakeLast(24))
             {
@@ -356,12 +510,13 @@ internal sealed class TripMap : Control
                 {
                     "pickup" => english ? "Pickup" : "Recogida", "delivery" => english ? "Delivery" : "Entrega",
                     "fuel" => english ? "Refueling" : "Repostaje", "rest" => english ? "Rest" : "Descanso",
-                    "ferry" => "Ferry", _ => english ? "Marker" : "Marcador"
+                    "ferry" => "Ferry",
+                    "route_changed" => english ? "Route recalculated" : "Ruta recalculada",
+                    string border when border.StartsWith("border:", StringComparison.Ordinal) =>
+                        (english ? "Border" : "Frontera") + $" · {Countries.Name(border[7..], english) ?? border[7..]}",
+                    _ => english ? "Marker" : "Marcador"
                 };
-                var symbol = point.Event switch
-                {
-                    "pickup" => "↑", "delivery" => "✓", "fuel" => "+", "rest" => "Ⅱ", "ferry" => "≈", _ => "◆"
-                };
+                var symbol = EventSymbol(point.Event);
                 Marker($"{symbol} {eventCaption}", Place(point.X, point.Z), accent, 6);
             }
         if (showCities)
@@ -369,5 +524,6 @@ internal sealed class TripMap : Control
                 .OrderBy(city => Math.Abs(centerX - city.X) + Math.Abs(centerZ - city.Z)).Take(12))
                 if (city != destination && city != origin && city != focusCity)
                     Marker(city.Name, Place(city.X, city.Z), label, 4);
+        if (Focused) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(ClientRectangle, -2, -2));
     }
 }

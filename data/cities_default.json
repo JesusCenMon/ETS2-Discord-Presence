@@ -2463,157 +2463,281 @@
       "realName": "Hannover",
       "x": "-1928.93",
       "z": "-8916.4",
-      "gameName": "hannover"
+      "gameName": "hannover",
+      "country": "DE"
     },
     {
       "realName": "Nürnberg",
       "x": "2665.54",
       "z": "7237.8",
-      "gameName": "nurnberg"
+      "gameName": "nurnberg",
+      "country": "DE"
     },
     {
       "realName": "Gdynia",
       "x": "28154.4",
       "z": "-22045.9",
-      "gameName": "gdyne"
+      "gameName": "gdyne",
+      "country": "PL"
     },
     {
       "realName": "L'Aquila",
       "x": "10098.9",
       "z": "46803.9",
-      "gameName": "aquila"
+      "gameName": "aquila",
+      "country": "IT"
     },
     {
       "realName": "Civitavecchia",
       "x": "3124",
       "z": "48749.1",
-      "gameName": "civitavec"
+      "gameName": "civitavec",
+      "country": "IT"
     },
     {
       "realName": "Crotone",
       "x": "25677.5",
       "z": "65250.7",
-      "gameName": "crotone"
+      "gameName": "crotone",
+      "country": "IT"
     },
     {
       "realName": "Enna",
       "x": "12818.1",
       "z": "74267.5",
-      "gameName": "enna"
+      "gameName": "enna",
+      "country": "IT"
     },
     {
       "realName": "Foggia",
       "x": "18927.3",
       "z": "52413.7",
-      "gameName": "foggia"
+      "gameName": "foggia",
+      "country": "IT"
     },
     {
       "realName": "Genova",
       "x": "-8329.93",
       "z": "34875.6",
-      "gameName": "genova"
+      "gameName": "genova",
+      "country": "IT"
     },
     {
       "realName": "Imola",
       "x": "3285.87",
       "z": "35401.5",
-      "gameName": "imola"
+      "gameName": "imola",
+      "country": "IT"
     },
     {
       "realName": "La Spezia",
       "x": "-5183.63",
       "z": "37196.4",
-      "gameName": "laspezia"
+      "gameName": "laspezia",
+      "country": "IT"
     },
     {
       "realName": "Latina",
       "x": "7571.98",
       "z": "52219.6",
-      "gameName": "latina"
+      "gameName": "latina",
+      "country": "IT"
     },
     {
       "realName": "Lecce",
       "x": "30077",
       "z": "58629.2",
-      "gameName": "lecce"
+      "gameName": "lecce",
+      "country": "IT"
     },
     {
       "realName": "Lucca",
       "x": "-1316.87",
       "z": "38411.4",
-      "gameName": "lucca"
+      "gameName": "lucca",
+      "country": "IT"
     },
     {
       "realName": "Modena",
       "x": "-110.371",
       "z": "34033.2",
-      "gameName": "modena"
+      "gameName": "modena",
+      "country": "IT"
     },
     {
       "realName": "Oristano",
       "x": "-11619.1",
       "z": "59839.6",
-      "gameName": "oristano"
+      "gameName": "oristano",
+      "country": "IT"
     },
     {
       "realName": "Perugia",
       "x": "5484.8",
       "z": "42625.8",
-      "gameName": "perugia"
+      "gameName": "perugia",
+      "country": "IT"
     },
     {
       "realName": "Pisa",
       "x": "-2296.73",
       "z": "39358.6",
-      "gameName": "pisa"
+      "gameName": "pisa",
+      "country": "IT"
     },
     {
       "realName": "Potenza",
       "x": "19793.2",
       "z": "57224.2",
-      "gameName": "potenza"
+      "gameName": "potenza",
+      "country": "IT"
     },
     {
       "realName": "Ravenna",
       "x": "5416.85",
       "z": "35514.5",
-      "gameName": "ravenna"
+      "gameName": "ravenna",
+      "country": "IT"
     },
     {
       "realName": "Reggio",
       "x": "20164.5",
       "z": "72275.1",
-      "gameName": "reggio"
+      "gameName": "reggio",
+      "country": "IT"
     },
     {
       "realName": "Siena",
       "x": "1194.18",
       "z": "41722.3",
-      "gameName": "siena"
+      "gameName": "siena",
+      "country": "IT"
     },
     {
       "realName": "Санкт-Петербург",
       "x": "59773.8",
       "z": "-57040.6",
-      "gameName": "petersburg"
+      "gameName": "petersburg",
+      "country": "RU"
     },
     {
       "realName": "Сосновый Бор",
       "x": "54949.1",
       "z": "-54394.3",
-      "gameName": "sosnovy_bor"
+      "gameName": "sosnovy_bor",
+      "country": "RU"
     },
     {
       "realName": "București",
       "x": "61121",
       "z": "31703.6",
-      "gameName": "bucuresti"
+      "gameName": "bucuresti",
+      "country": "RO"
     },
     {
       "realName": "Велико Търново",
       "x": "60763.4",
       "z": "38859.5",
-      "gameName": "veli_tarnovo"
+      "gameName": "veli_tarnovo",
+      "country": "BG"
+    },
+    {
+      "realName": "Akureyri",
+      "x": -61825.5,
+      "z": -104145.0,
+      "country": "IS",
+      "gameName": "akureyri"
+    },
+    {
+      "realName": "Blönduós",
+      "x": -65428.8,
+      "z": -105902.6,
+      "country": "IS",
+      "gameName": "blonduos"
+    },
+    {
+      "realName": "Borgarnes",
+      "x": -72043.1,
+      "z": -102095.1,
+      "country": "IS",
+      "gameName": "borgarnes"
+    },
+    {
+      "realName": "Egilsstaðir",
+      "x": -54919.4,
+      "z": -97863.3,
+      "country": "IS",
+      "gameName": "egilsstadir"
+    },
+    {
+      "realName": "Höfn í Hornafirði",
+      "x": -58667.4,
+      "z": -93306.5,
+      "country": "IS",
+      "gameName": "hofn"
+    },
+    {
+      "realName": "Hólmavík",
+      "x": -68085.8,
+      "z": -107730.8,
+      "country": "IS",
+      "gameName": "holmavik"
+    },
+    {
+      "realName": "Húsavík",
+      "x": -58671.9,
+      "z": -106244.7,
+      "country": "IS",
+      "gameName": "husavik"
+    },
+    {
+      "realName": "Ísafjörður",
+      "x": -71094.0,
+      "z": -112565.8,
+      "country": "IS",
+      "gameName": "isafjordur"
+    },
+    {
+      "realName": "Keflavík",
+      "x": -76116.7,
+      "z": -99255.7,
+      "country": "IS",
+      "gameName": "keflavik"
+    },
+    {
+      "realName": "Ólafsvík",
+      "x": -75926.5,
+      "z": -105821.5,
+      "country": "IS",
+      "gameName": "olafsvik"
+    },
+    {
+      "realName": "Patreksfjörður",
+      "x": -75570.1,
+      "z": -111004.7,
+      "country": "IS",
+      "gameName": "patreksfjord"
+    },
+    {
+      "realName": "Reykjavík",
+      "x": -73031.1,
+      "z": -98960.5,
+      "country": "IS",
+      "gameName": "reykjavik"
+    },
+    {
+      "realName": "Selfoss",
+      "x": -70767.2,
+      "z": -96442.5,
+      "country": "IS",
+      "gameName": "selfoss"
+    },
+    {
+      "realName": "Þórshöfn",
+      "x": -52912.8,
+      "z": -104210.8,
+      "country": "IS",
+      "gameName": "thorshofn"
     }
   ]
 }

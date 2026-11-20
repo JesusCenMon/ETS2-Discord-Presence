@@ -92,7 +92,7 @@ internal sealed partial class MainForm
             foreach (var group in trips.GroupBy(entry => entry.Truck ?? L("Camión sin registrar", "Truck not recorded")))
             {
                 var fuel = group.Sum(entry => entry.FuelLitres);
-                var measured = group.Where(entry => entry.FuelKm >= 1 && entry.FuelLitres > 0 && double.IsFinite(entry.FuelLitres)
+                var measured = group.Where(entry => entry.Measurements?.Quality == "complete" && entry.FuelKm >= 1 && entry.FuelLitres > 0 && double.IsFinite(entry.FuelLitres)
                     && double.IsFinite(entry.FuelKm)).ToArray();
                 var average = measured.Sum(entry => entry.FuelKm) >= 20
                     ? $"{100 * measured.Sum(entry => entry.FuelLitres) / measured.Sum(entry => entry.FuelKm):N1}" : "—";

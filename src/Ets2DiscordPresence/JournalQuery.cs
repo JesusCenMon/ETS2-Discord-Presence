@@ -23,7 +23,7 @@ internal static class JournalQuery
         IComparable Key(TripEntry entry) => column switch
         {
             "origin" => entry.Origin, "destination" => entry.Destination, "cargo" => entry.Cargo,
-            "result" => entry.Result, "km" => entry.Km, "time" => entry.DrivingSeconds,
+            "result" => entry.Result, "km" => entry.Km, "time" => entry.DrivingSeconds, "revenue" => entry.Revenue ?? long.MinValue,
             _ => entry.Finished ?? DateTimeOffset.MinValue
         };
         return descending ? entries.OrderByDescending(Key) : entries.OrderBy(Key);
