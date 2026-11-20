@@ -19,6 +19,14 @@
 
 ## Get started
 
+### Windows may show an unrecognized-app warning
+
+Windows may display **“Windows protected your PC”** or **“Unknown publisher”** when you open the app. The current release has **no publisher digital signature**. SmartScreen checks signing and download reputation, so this prompt can appear for an unsigned community app. [Microsoft explains how this works](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
+
+Download from **JesusCenMon/ETS2-Discord-Presence → Releases** and check that the file is named **ETS2DiscordPresence.exe**. The release notes include a SHA-256 checksum to confirm it matches the published file.
+
+Keep Windows security enabled. If your antivirus names a specific threat, stop and report the exact message through the [bug report form](https://github.com/JesusCenMon/ETS2-Discord-Presence/issues/new/choose).
+
 1. **[Download ETS2DiscordPresence.exe](https://github.com/JesusCenMon/ETS2-Discord-Presence/releases/latest/download/ETS2DiscordPresence.exe)** and open it.
 2. Open **Discord desktop** and **Euro Truck Simulator 2**.
 3. Load a profile and start driving. The app finds the Steam installation and prepares the bundled telemetry readers automatically.

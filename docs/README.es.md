@@ -10,6 +10,14 @@ Muestra en Discord qué estás haciendo en **Euro Truck Simulator 2**: entrega, 
 
 ## Instalar en Windows
 
+### Posible aviso de Windows al abrir la app
+
+Windows puede mostrar **«Windows protegió su PC»** o **«Editor desconocido»** al abrirla. Esta versión todavía **no tiene una firma digital de editor**. SmartScreen revisa la firma y la reputación de las descargas, por lo que este aviso puede aparecer con una app independiente sin firma. [Microsoft explica cómo funciona](https://learn.microsoft.com/es-es/windows/apps/package-and-deploy/smartscreen-reputation).
+
+Descarga desde **JesusCenMon/ETS2-Discord-Presence → Releases** y comprueba que el archivo se llame **ETS2DiscordPresence.exe**. Las notas de la versión incluyen una huella SHA-256 para comprobar que coincide con el archivo publicado.
+
+Mantén activada la protección de Windows. Si tu antivirus identifica una amenaza concreta, detente y comparte el mensaje exacto en el [formulario de errores](https://github.com/JesusCenMon/ETS2-Discord-Presence/issues/new/choose).
+
 Windows 10 de 64 bits (versión 2004 o posterior) o Windows 11. El ejecutable incluye .NET y los lectores del juego. No necesitas descargar dependencias por separado.
 
 En el primer inicio, la app elige español si Windows está en español e inglés para los demás idiomas. Puedes elegir por separado el idioma del panel y de Discord en **Ajustes**.
