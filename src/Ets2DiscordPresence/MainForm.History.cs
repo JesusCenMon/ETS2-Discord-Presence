@@ -9,7 +9,7 @@ internal sealed partial class MainForm
     {
         var window = new LibraryPage(L("Diario", "Journal"));
         var header = Grid(1);
-        header.Padding = new Padding(14, 12, 14, 6);
+        header.Padding = new Padding(16, 12, 16, 8);
         var filters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true };
         var cityFilter = new TextBox { Width = 240, PlaceholderText = L("Ciudad, carga o etiqueta", "City, cargo or tag"), AccessibleName = L("Buscar en el diario", "Search the journal") };
         var from = new DateTimePicker { ShowCheckBox = true, Checked = false, Format = DateTimePickerFormat.Short, Width = 152, AccessibleName = L("Desde", "From") };
@@ -98,11 +98,18 @@ internal sealed partial class MainForm
         title.Controls.AddRange([TextLabel(L("Diario", "Journal"), 23, true), resultCount]);
         AddRows(header, title, tools, searchBar, filters, activeFilters, stats);
 
-        var history = new DataGridView
+        var history = new JournalGrid
         {
-            Dock = DockStyle.Fill, ReadOnly = true, RowHeadersVisible = false, AllowUserToAddRows = false,
-            AllowUserToDeleteRows = false, MultiSelect = true, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            BackgroundColor = Surface, BorderStyle = BorderStyle.None, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            RowHeadersVisible = false,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            MultiSelect = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            BackgroundColor = Surface,
+            BorderStyle = BorderStyle.None,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
         };
         history.EnableHeadersVisualStyles = false;
         history.ColumnHeadersDefaultCellStyle.BackColor = shellPalette.Hover;
@@ -138,6 +145,25 @@ internal sealed partial class MainForm
                 column.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             history.Columns.Add(column);
         }
+        var entries = Array.Empty<TripEntry>();
+        TripEntry? EntryAt(int index) => index >= 0 && index < entries.Length ? entries[index] : null;
+        history.VirtualMode = true;
+        history.CellValueNeeded += (_, e) =>
+        {
+            if (EntryAt(e.RowIndex) is not { } entry) return;
+            e.Value = history.Columns[e.ColumnIndex].Name switch
+            {
+                "date" => entry.Finished is { } end ? $"{end.ToLocalTime():d}\n{end.ToLocalTime():t}" : "—",
+                "origin" => entry.Origin,
+                "destination" => entry.Destination,
+                "cargo" => JourneyLabel(entry),
+                "result" => ResultIcon(entry),
+                "km" => $"{(preferences.Features.Miles ? entry.Km / 1.609344 : entry.Km):N1}",
+                "time" => FormatDriving(entry.DrivingSeconds),
+                "revenue" => entry.Revenue?.ToString("N0") ?? "—",
+                _ => ""
+            };
+        };
         var coachIcon = LoadFluent("vehicle_bus");
         var freeIcon = LoadFluent("globe");
         var deliveryIcon = LoadFluent("vehicle_truck");
@@ -147,13 +173,13 @@ internal sealed partial class MainForm
             var bounds = Rectangle.Intersect(e.RowBounds, history.ClientRectangle);
             if (bounds.Width < 4 || bounds.Height < 4) return;
             var current = history.Rows[e.RowIndex];
-            if (current.Tag is TripEntry entry)
+            if (EntryAt(e.RowIndex) is { } entry)
             {
                 var icon = entry.JourneyType switch { "coach" => coachIcon, "free" => freeIcon, _ => deliveryIcon };
                 DrawIcon(e.Graphics, icon, new Rectangle(bounds.X + 8, bounds.Y + (bounds.Height - 16) / 2, 16, 16), shellPalette.Muted);
                 if (entry.Favorite)
                     TextRenderer.DrawText(e.Graphics, "★", history.Font, new Point(bounds.X + 25, bounds.Y + 2), shellPalette.Accent);
-                if (sortColumn == "date" && e.RowIndex > 0 && history.Rows[e.RowIndex - 1].Tag is TripEntry previous
+                if (sortColumn == "date" && e.RowIndex > 0 && EntryAt(e.RowIndex - 1) is { } previous
                     && previous.Finished?.LocalDateTime.Date != entry.Finished?.LocalDateTime.Date)
                 {
                     using var divider = new Pen(shellPalette.Border, 2);
@@ -166,8 +192,10 @@ internal sealed partial class MainForm
                 e.Graphics.DrawRectangle(stroke, Rectangle.Inflate(bounds, -1, -1));
             }
         };
-        var entries = Array.Empty<TripEntry>();
         var descending = true;
+        TripJournal? observedJournal = null;
+        TripEntry[] observedEntries = [];
+        string? lastQuery = null;
         void RefreshFilterOptions()
         {
             SetOptions(truckFilter, journal.Entries.Select(entry => entry.Truck).OfType<string>());
@@ -183,34 +211,42 @@ internal sealed partial class MainForm
         }
         void RefreshHistory()
         {
-            if (refreshing) return;
+            if (refreshing || window.IsDisposed) return;
+            var query = string.Join("|", cityFilter.Text, from.Checked, from.Value.Date, to.Checked, to.Value.Date,
+                favorites.Checked, resultFilter.SelectedIndex, truckFilter.Text, distanceFilter.SelectedIndex,
+                tagFilter.Text, sortColumn, descending);
+            var sourceChanged = !ReferenceEquals(observedJournal, journal) || !observedEntries.SequenceEqual(journal.Entries);
+            if (!sourceChanged && lastQuery == query) return;
             refreshing = true;
             try
             {
                 var selectedIds = Selection().Select(entry => entry.Id).ToHashSet();
-                var currentId = (history.CurrentRow?.Tag as TripEntry)?.Id ?? lastJournalTrip;
+                var currentId = EntryAt(history.CurrentRow?.Index ?? -1)?.Id ?? lastJournalTrip;
                 var firstVisible = Math.Max(history.FirstDisplayedScrollingRowIndex, history.RowCount == 0 ? lastJournalScroll : 0);
-                RefreshFilterOptions();
+                if (sourceChanged) RefreshFilterOptions();
                 var search = cityFilter.Text.Trim();
-                activeFilters.SuspendLayout();
-                foreach (var old in activeFilters.Controls.Cast<Control>().ToArray()) old.Dispose();
-                void Chip(string text, Action removeFilter)
+                if (lastQuery != query)
                 {
-                    var button = MakeButton(text + "  ×");
-                    button.AccessibleName = L($"Quitar filtro {text}", $"Remove filter {text}");
-                    button.Click += (_, _) => { removeFilter(); RefreshHistory(); cityFilter.Focus(); };
-                    button.Tag = "primary";
-                    activeFilters.Controls.Add(button);
-                    StyleButton(button);
+                    activeFilters.SuspendLayout();
+                    foreach (var old in activeFilters.Controls.Cast<Control>().ToArray()) old.Dispose();
+                    void Chip(string text, Action removeFilter)
+                    {
+                        var button = MakeButton(text + "  ×");
+                        button.AccessibleName = L($"Quitar filtro {text}", $"Remove filter {text}");
+                        button.Click += (_, _) => { removeFilter(); RefreshHistory(); cityFilter.Focus(); };
+                        button.Tag = "primary";
+                        activeFilters.Controls.Add(button);
+                        StyleButton(button);
+                    }
+                    if (search.Length > 0) Chip(CompactLine(search), cityFilter.Clear);
+                    if (favorites.Checked) Chip(favorites.Text, () => favorites.Checked = false);
+                    if (from.Checked) Chip($"{L("Desde", "From")} {from.Value:d}", () => from.Checked = false);
+                    if (to.Checked) Chip($"{L("Hasta", "To")} {to.Value:d}", () => to.Checked = false);
+                    foreach (var filter in new[] { resultFilter, truckFilter, distanceFilter, tagFilter })
+                        if (filter.SelectedIndex > 0) Chip(CompactLine(filter.Text), () => filter.SelectedIndex = 0);
+                    activeFilters.Visible = activeFilters.Controls.Count > 0;
+                    activeFilters.ResumeLayout();
                 }
-                if (search.Length > 0) Chip(CompactLine(search), cityFilter.Clear);
-                if (favorites.Checked) Chip(favorites.Text, () => favorites.Checked = false);
-                if (from.Checked) Chip($"{L("Desde", "From")} {from.Value:d}", () => from.Checked = false);
-                if (to.Checked) Chip($"{L("Hasta", "To")} {to.Value:d}", () => to.Checked = false);
-                foreach (var filter in new[] { resultFilter, truckFilter, distanceFilter, tagFilter })
-                    if (filter.SelectedIndex > 0) Chip(CompactLine(filter.Text), () => filter.SelectedIndex = 0);
-                activeFilters.Visible = activeFilters.Controls.Count > 0;
-                activeFilters.ResumeLayout();
                 var matches = journal.Entries.Where(entry => entry.Finished is { } finish
                     && (!from.Checked || finish.LocalDateTime.Date >= from.Value.Date)
                     && (!to.Checked || finish.LocalDateTime.Date <= to.Value.Date)
@@ -219,25 +255,23 @@ internal sealed partial class MainForm
                         .Any(value => value?.Contains(search, StringComparison.CurrentCultureIgnoreCase) == true)
                     && JournalQuery.Matches(entry, resultFilter.SelectedIndex, truckFilter.SelectedIndex > 0 ? truckFilter.Text : null,
                         distanceFilter.SelectedIndex, preferences.Features.Miles, tagFilter.SelectedIndex > 0 ? tagFilter.Text : null));
+                var previousEntries = entries;
                 entries = JournalQuery.Sort(matches, sortColumn, descending).ToArray();
                 foreach (DataGridViewColumn column in history.Columns)
                     column.HeaderCell.SortGlyphDirection = column.Name != sortColumn ? SortOrder.None
                         : descending ? SortOrder.Descending : SortOrder.Ascending;
-                history.Rows.Clear();
-                foreach (var entry in entries)
-                {
-                    var row = history.Rows.Add(entry.Finished is { } end ? $"{end.ToLocalTime():d}\n{end.ToLocalTime():t}" : "—",
-                        entry.Origin, entry.Destination, JourneyLabel(entry), ResultIcon(entry), $"{(preferences.Features.Miles ? entry.Km / 1.609344 : entry.Km):N1}", FormatDriving(entry.DrivingSeconds), entry.Revenue?.ToString("N0") ?? "—");
-                    history.Rows[row].Tag = entry;
-                }
+                if (history.RowCount != entries.Length) history.RowCount = entries.Length;
+                for (var index = 0; index < entries.Length; index++)
+                    if (index >= previousEntries.Length || previousEntries[index] != entries[index])
+                        history.InvalidateRow(index);
                 history.Visible = entries.Length > 0;
                 if (entries.Length > 0)
                 {
                     var index = Array.FindIndex(entries, entry => entry.Id == currentId);
                     history.CurrentCell = history.Rows[Math.Max(0, index)].Cells["destination"];
                     history.ClearSelection();
-                    foreach (DataGridViewRow row in history.Rows)
-                        if (row.Tag is TripEntry entry && selectedIds.Contains(entry.Id)) row.Selected = true;
+                    for (var selectedIndex = 0; selectedIndex < entries.Length; selectedIndex++)
+                        if (selectedIds.Contains(entries[selectedIndex].Id)) history.Rows[selectedIndex].Selected = true;
                     if (history.Visible && firstVisible >= 0) history.FirstDisplayedScrollingRowIndex = Math.Min(firstVisible, entries.Length - 1);
                 }
                 resultCount.Text = L($"{entries.Length:N0} viajes", $"{entries.Length:N0} trips");
@@ -256,19 +290,26 @@ internal sealed partial class MainForm
                     emptyState.Visible = showEmpty;
                     if (showEmpty) Reveal(emptyState);
                 }
-                emptyState.AccessibleName = stats.Text;
+                emptyState.AccessibleName = journal.Entries.Count == 0 ? L("Diario vacío", "Journal empty") : L("Sin resultados", "No results");
+                emptyState.AccessibleDescription = stats.Text;
+                emptyState.Invalidate();
                 export.Enabled = entries.Length > 0;
             }
             finally { refreshing = false; }
+            observedJournal = journal;
+            observedEntries = journal.Entries.ToArray();
+            lastQuery = query;
             UpdateActions();
         }
         TripEntry[] Selection() => history.SelectedRows.Cast<DataGridViewRow>().OrderBy(row => row.Index)
-            .Select(row => row.Tag).OfType<TripEntry>().ToArray();
+            .Select(row => EntryAt(row.Index)).OfType<TripEntry>().ToArray();
         void UpdateActions()
         {
             if (refreshing) return;
             var count = Selection().Length;
             compare.Text = L($"Comparar ({count}/2)", $"Compare ({count}/2)");
+            var actionStyle = count == 2 ? "primary" : null;
+            if (!Equals(compare.Tag, actionStyle)) { compare.Tag = actionStyle; StyleButton(compare); }
             notes.Enabled = remove.Enabled = count == 1;
             move.Enabled = favorite.Enabled = tag.Enabled = count > 0;
             var newlyAvailable = !compare.Enabled && count == 2;
@@ -347,7 +388,7 @@ internal sealed partial class MainForm
         to.ValueChanged += (_, _) => RefreshHistory();
         history.CellDoubleClick += (_, e) =>
         {
-            if (e.RowIndex >= 0 && history.Rows[e.RowIndex].Tag is TripEntry entry) ShowSummary(entry, window);
+            if (e.RowIndex >= 0 && EntryAt(e.RowIndex) is { } entry) ShowSummary(entry, window);
         };
         history.KeyDown += (_, e) =>
         {
@@ -387,7 +428,7 @@ internal sealed partial class MainForm
         StyleTool(window);
         window.Leaving = () =>
         {
-            lastJournalTrip = (history.CurrentRow?.Tag as TripEntry)?.Id;
+            lastJournalTrip = EntryAt(history.CurrentRow?.Index ?? -1)?.Id;
             lastJournalScroll = Math.Max(0, history.FirstDisplayedScrollingRowIndex);
         };
         window.Disposed += (_, _) =>
@@ -398,9 +439,20 @@ internal sealed partial class MainForm
             freeIcon.Dispose();
             deliveryIcon.Dispose();
         };
+        window.Activated = RefreshHistory;
+        window.Deactivated = () => searchDelay.Stop();
         PushLibraryPage(window);
         if (IsHandleCreated) BeginInvoke(() => { if (!window.IsDisposed) RefreshHistory(); });
         else RefreshHistory();
+    }
+
+    private sealed class JournalGrid : DataGridView
+    {
+        internal JournalGrid()
+        {
+            DoubleBuffered = true;
+            AccessibleName = "Trips";
+        }
     }
 
     private string JourneyLabel(TripEntry entry) => entry.JourneyType switch
@@ -512,7 +564,7 @@ internal sealed partial class MainForm
             {
                 if (content.Controls.OfType<SpeedChart>().Any()) return;
                 DataAction(window, () => AddRows(content, new SpeedChart(TelemetryReplay.Read(replay), Surface, Foreground, Accent)
-                    { Dock = DockStyle.Top, Height = 96, AccessibleName = L("Velocidad del viaje", "Trip speed") }));
+                { Dock = DockStyle.Top, Height = 96, AccessibleName = L("Velocidad del viaje", "Trip speed") }));
             });
             AddAction(content, L("Ver recorrido", "View route"), () => ShowPlayback(replay, window));
         }

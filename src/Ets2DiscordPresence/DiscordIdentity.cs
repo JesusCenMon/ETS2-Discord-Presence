@@ -3,7 +3,7 @@ namespace Ets2DiscordPresence;
 internal static class DiscordIdentity
 {
     internal const string ActivityName = "Euro Truck Simulator 2";
-    internal const string AssetsTag = "v0.8.6";
+    internal const string AssetsTag = "v0.8.8";
     internal const string ActivityImage = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/cbfd64e8f797a05b99061eadcddc479d2364b474/assets/discord/truck.jpg";
     private const string CoachArtworkRoot = "https://raw.githubusercontent.com/JesusCenMon/ETS2-Discord-Presence/cbfd64e8f797a05b99061eadcddc479d2364b474/assets/discord/coaches/";
     private static readonly Lazy<IReadOnlyDictionary<string, string>> SpanishImages = new(() => LoadCountryImages("country_art.json"));

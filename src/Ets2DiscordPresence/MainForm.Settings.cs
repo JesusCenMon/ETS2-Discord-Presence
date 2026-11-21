@@ -2,9 +2,39 @@ namespace Ets2DiscordPresence;
 
 internal sealed partial class MainForm
 {
+    private string settingsReturnPage = "home";
+    private SettingsPages? settingsNavigation;
+    private string settingsInitialSection = "";
+    private readonly Dictionary<string, Panel> settingsSections = [];
+
     private void ShowSettings(string initialTab = "")
     {
-        using var window = ToolWindow(L("Ajustes", "Settings"), new Size(1040, 690), placement: "settings");
+        settingsInitialSection = initialTab;
+        try
+        {
+            if (currentPage != "settings") Navigate("settings");
+            if (settingsSections.TryGetValue(initialTab, out var section)) settingsNavigation!.SelectedTab = section;
+        }
+        finally { settingsInitialSection = ""; }
+    }
+
+    private void BuildSettings()
+    {
+        using var construction = new UiLayoutBatch();
+        var root = new LibraryPage(L("Ajustes", "Settings"));
+        var window = new Form
+        {
+            Text = root.Text,
+            TopLevel = false,
+            FormBorderStyle = FormBorderStyle.None,
+            Dock = DockStyle.Fill,
+            AutoScaleMode = AutoScaleMode.None,
+            ShowInTaskbar = false
+        };
+        root.Size = pageHost.ClientSize;
+        window.Size = pageHost.ClientSize;
+        window.SuspendLayout();
+        root.Controls.Add(window);
         var tabs = new SettingsPages { Dock = DockStyle.Fill };
         var footer = DialogFooter();
         var apply = MakeButton(L("Guardar cambios", "Save changes"));
@@ -13,13 +43,14 @@ internal sealed partial class MainForm
         var restart = MakeButton(L("Reiniciar aplicación ahora", "Restart application now"));
         restart.Visible = preferences.Theme != initialTheme || portableRestartPending;
         restart.Click += (_, _) => RestartApplication(window);
-        cancel.DialogResult = DialogResult.Cancel;
+        cancel.Click += (_, _) =>
+        {
+            root.Context = "";
+            Navigate(settingsReturnPage);
+        };
         footer.Controls.AddRange([apply, cancel, restart]);
         window.Controls.Add(tabs);
-        settingsTripBar = CreateTripBar(() => { window.Close(); Navigate("trip"); });
-        window.Controls.Add(settingsTripBar);
         window.Controls.Add(footer);
-        window.Disposed += (_, _) => settingsTripBar = null;
         window.AcceptButton = apply;
         window.CancelButton = cancel;
 
@@ -45,8 +76,12 @@ internal sealed partial class MainForm
         var textSizeTitle = L("Tamaño del texto", "Text size");
         var textSize = new TrackBar
         {
-            Minimum = 0, Maximum = textSizes.Length - 1, TickStyle = TickStyle.BottomRight, Dock = DockStyle.Top,
-            Value = Math.Max(0, Array.IndexOf(textSizes, preferences.TextPercent)), AccessibleName = textSizeTitle,
+            Minimum = 0,
+            Maximum = textSizes.Length - 1,
+            TickStyle = TickStyle.BottomRight,
+            Dock = DockStyle.Top,
+            Value = Math.Max(0, Array.IndexOf(textSizes, preferences.TextPercent)),
+            AccessibleName = textSizeTitle,
             Margin = new Padding(0, 4, 0, 8)
         };
         AddRows(style, TextLabel(textSizeTitle, 10, true), textSize);
@@ -181,8 +216,10 @@ internal sealed partial class MainForm
         var initialFields = PresenceFormatter.Order(preferences);
         bool EnabledField(string key) => key switch
         {
-            "cargo" => preferences.ShowCargo, "route" => preferences.ShowRoute,
-            "city" => preferences.ShowCity, _ => preferences.ShowDistance
+            "cargo" => preferences.ShowCargo,
+            "route" => preferences.ShowRoute,
+            "city" => preferences.ShowCity,
+            _ => preferences.ShowDistance
         };
         var fieldLayout = Grid(2);
         fieldLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
@@ -192,8 +229,13 @@ internal sealed partial class MainForm
         var fields = MakeOrder(fieldOptions, L("Datos de Discord en orden de aparición", "Discord fields in display order"),
             initialFields, FieldName, EnabledField);
         var livePreview = TextLabel("", 11);
-        var previewPicture = new PictureBox { Size = new Size(112, 112), SizeMode = PictureBoxSizeMode.Zoom,
-            AccessibleName = L("Portada de ejemplo", "Example artwork"), TabStop = false };
+        var previewPicture = new PictureBox
+        {
+            Size = new Size(112, 112),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            AccessibleName = L("Portada de ejemplo", "Example artwork"),
+            TabStop = false
+        };
         string? previewPictureKey = null;
         window.Disposed += (_, _) => previewPicture.Image?.Dispose();
         previewOptions.Padding = new Padding(12);
@@ -304,7 +346,9 @@ internal sealed partial class MainForm
                 ? DiscordIdentity.ImageFor(visible.SharesCountry ? "FR" : null, releaseArtwork, english, sample.Coach) : null;
             exampleProfile.Text = L("Perfil · ", "Profile · ") + (config.Features.DiscordMode switch
             {
-                "stream" => "Stream", "private" => L("Privado", "Private"), _ => "Normal"
+                "stream" => "Stream",
+                "private" => L("Privado", "Private"),
+                _ => "Normal"
             });
             if (coversLanguage != config.DiscordLanguage)
             {
@@ -447,6 +491,11 @@ internal sealed partial class MainForm
                     .Concat(tripFields.Where(field => !field.Value.Checked).Select(field => field.Key))
                     .ToArray()
             });
+            if (settingsError is not null)
+            {
+                MessageBox.Show(window, settingsError, Text);
+                return;
+            }
             LoadCatalog();
             ResetLocation(IsGameRunning());
             ApplyLanguage();
@@ -458,18 +507,26 @@ internal sealed partial class MainForm
             if (compactChanged && !fullScreen) ApplyCompactSize();
             ConfigurePanels();
             RefreshPresence();
-            window.DialogResult = DialogResult.OK;
-        };
-        var initialPage = initialTab switch
-        {
-            "display" => style.Parent, "behavior" => privacy.Parent, "advanced" => game.Parent, _ => discordTab.Parent
-        };
-        if (initialPage is Panel page) tabs.SelectedTab = page;
-        tabs.BuildNavigation(shellPalette, () => Motion, host => AnimatePageChange(host));
-        StyleTool(window);
-        RenderDriveOverview(displayedDrive, driveConnected, driveSharing);
-        if (window.ShowDialog(this) == DialogResult.OK)
+            root.Context = "";
+            Navigate(settingsReturnPage);
             ShowStatusToast(L("Ajustes guardados", "Settings saved"));
+        };
+        settingsNavigation = tabs;
+        settingsSections.Clear();
+        settingsSections["display"] = (Panel)style.Parent!;
+        settingsSections["behavior"] = (Panel)privacy.Parent!;
+        settingsSections["advanced"] = (Panel)game.Parent!;
+        settingsSections["discord"] = (Panel)discordTab.Parent!;
+        tabs.PreparePage = page => StyleTool(page);
+        tabs.Size = window.ClientSize;
+        tabs.PerformLayout();
+        if (settingsSections.TryGetValue(settingsInitialSection, out var initial)) tabs.SelectedTab = initial;
+        tabs.BuildNavigation(shellPalette, () => Motion);
+        StyleTool(window);
+        construction.Dispose();
+        window.ResumeLayout(true);
+        window.Show();
+        PushLibraryPage(root);
     }
 
     private void ShowArtworkLanguages(IWin32Window owner, bool coach)
@@ -483,8 +540,14 @@ internal sealed partial class MainForm
         {
             var english = column == 1;
             var artwork = LoadPreviewImage(DiscordIdentity.ImageFor("FR", english: english, coach: coach));
-            var image = new PictureBox { Size = new Size(128, 128), Image = artwork, SizeMode = PictureBoxSizeMode.Zoom,
-                AccessibleName = english ? "English artwork" : "Portada en español", TabStop = false };
+            var image = new PictureBox
+            {
+                Size = new Size(128, 128),
+                Image = artwork,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                AccessibleName = english ? "English artwork" : "Portada en español",
+                TabStop = false
+            };
             image.Disposed += (_, _) => artwork?.Dispose();
             var sample = Grid(1);
             AddRows(sample, TextLabel(english ? "English" : "Español", 11, true), image);
@@ -514,13 +577,24 @@ internal sealed partial class MainForm
     {
         var page = new Panel { Text = name, AutoScroll = true, Dock = DockStyle.Fill, BackColor = shellPalette.Canvas };
         var content = Grid(1);
-        content.Padding = new Padding(17);
+        content.SuspendLayout();
+        content.Padding = new Padding(16);
         page.Controls.Add(content);
         tabs.Add(page);
+        var lastWidth = -1;
         void WrapLabels()
         {
-            var width = page.ClientSize.Width - content.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth;
-            foreach (var label in content.Controls.OfType<Label>()) SetWrap(label, width - label.Margin.Horizontal);
+            var width = Math.Max(120, page.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
+            if (width == lastWidth) return;
+            lastWidth = width;
+            content.MaximumSize = new Size(width, 0);
+            content.MinimumSize = new Size(width, 0);
+            var innerWidth = Math.Max(80, width - content.Padding.Horizontal);
+            foreach (Control child in content.Controls)
+            {
+                child.MaximumSize = new Size(Math.Max(40, innerWidth - child.Margin.Horizontal), 0);
+                if (child is Label label) SetWrap(label, innerWidth - label.Margin.Horizontal);
+            }
         }
         page.ClientSizeChanged += (_, _) => WrapLabels();
         page.Enter += (_, _) => WrapLabels();
@@ -540,9 +614,12 @@ internal sealed partial class MainForm
         row.Controls.Add(caption, 0, 0);
         row.Controls.Add(box, 1, 0);
         AddRows(parent, row);
+        var arrangedWidth = -1;
         void Arrange()
         {
-            var narrow = row.ClientSize.Width < 460;
+            if (row.ClientSize.Width == arrangedWidth) return;
+            arrangedWidth = row.ClientSize.Width;
+            var narrow = arrangedWidth < 460;
             row.SuspendLayout();
             row.SetCellPosition(box, new TableLayoutPanelCellPosition(narrow ? 0 : 1, narrow ? 1 : 0));
             row.SetColumnSpan(caption, narrow ? 2 : 1);
@@ -567,13 +644,24 @@ internal sealed partial class MainForm
     {
         var box = new SettingSwitch(() => shellPalette, () => Motion, L("Sí", "On"), L("No", "Off"))
         {
-            Text = title, Checked = value, AutoSize = false, Dock = DockStyle.Top, AccessibleName = title,
-            BackColor = shellPalette.Surface, CheckAlign = ContentAlignment.MiddleLeft, TextAlign = ContentAlignment.MiddleLeft,
+            Text = title,
+            Checked = value,
+            AutoSize = false,
+            Dock = DockStyle.Top,
+            AccessibleName = title,
+            BackColor = shellPalette.Surface,
+            CheckAlign = ContentAlignment.MiddleLeft,
+            TextAlign = ContentAlignment.MiddleLeft,
             Margin = new Padding(0, 4, 0, 4)
         };
+        var measuredWidth = -1;
+        Font? measuredFont = null;
         void SizeSwitch()
         {
             var width = Math.Max(80, box.Width - 32 - 54 * box.DeviceDpi / 96);
+            if (measuredWidth == width && ReferenceEquals(measuredFont, box.Font)) return;
+            measuredWidth = width;
+            measuredFont = box.Font;
             var measured = TextRenderer.MeasureText(title, box.Font, new Size(width, 0), TextFormatFlags.WordBreak);
             var height = Math.Max(44, measured.Height + 16);
             if (box.Height != height) box.Height = height;
@@ -602,8 +690,13 @@ internal sealed partial class MainForm
     {
         var list = new CheckedListBox
         {
-            Dock = DockStyle.Top, Height = 94, IntegralHeight = false, CheckOnClick = true,
-            AccessibleName = title, BackColor = Surface, ForeColor = Foreground
+            Dock = DockStyle.Top,
+            Height = 94,
+            IntegralHeight = false,
+            CheckOnClick = true,
+            AccessibleName = title,
+            BackColor = Surface,
+            ForeColor = Foreground
         };
         void SizeOrder() => list.Height = Math.Max(94, keys.Length * list.ItemHeight + 8);
         list.FontChanged += (_, _) => SizeOrder();

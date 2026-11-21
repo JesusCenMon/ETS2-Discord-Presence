@@ -6,7 +6,10 @@ internal sealed partial class MainForm
 {
     private readonly TableLayoutPanel appShell = new()
     {
-        Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty
+        Dock = DockStyle.Fill,
+        ColumnCount = 2,
+        RowCount = 1,
+        Margin = Padding.Empty
     };
     private readonly Panel pageHost = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly Panel sidebar = new() { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(8) };
@@ -34,7 +37,7 @@ internal sealed partial class MainForm
     private string? homeArtworkNote;
     private Panel tripShellPage = null!;
     private FlowLayoutPanel themeStrip = null!;
-    private string currentPage = "home";
+    private string currentPage = "";
     private bool narrowShell;
     private bool hasShellStatus;
     private bool shellGameOpen;
@@ -48,6 +51,7 @@ internal sealed partial class MainForm
     {
         if (!Visible || statusToast is null) return;
         statusToast.Text = message;
+        shellTips.SetToolTip(statusToast, message);
         statusToast.AccessibleName = message;
         statusToast.BackColor = shellPalette.Elevated;
         statusToast.ForeColor = shellPalette.Text;
@@ -75,13 +79,20 @@ internal sealed partial class MainForm
         statusToast = TextLabel("", 10, true);
         statusToast.Padding = new Padding(16, 8, 16, 8);
         statusToast.Margin = Padding.Empty;
-        statusToast.Visible = false;
+        statusToast.Visible = true;
+        statusToast.AutoSize = false;
+        statusToast.AutoEllipsis = true;
+        void SizeToast() => statusToast.Height = statusToast.Font.Height + statusToast.Padding.Vertical + 4;
+        statusToast.FontChanged += (_, _) => SizeToast();
+        SizeToast();
         dashboard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         dashboard.Controls.Add(statusToast, 0, 2);
         statusToastTimer.Tick += (_, _) =>
         {
             statusToastTimer.Stop();
-            statusToast.Visible = false;
+            statusToast.Text = "";
+            statusToast.AccessibleName = "";
+            shellTips.SetToolTip(statusToast, "");
         };
         Disposed += (_, _) => statusToastTimer.Dispose();
         appShell.Controls.Add(dashboard, 1, 0);
@@ -92,16 +103,12 @@ internal sealed partial class MainForm
 
         var menu = Grid(1);
         menu.Padding = new Padding(0, 4, 0, 0);
-        AddNavigation(menu, "home", "home", "Inicio", "Home", () =>
-        {
-            Navigate("home");
-            if (homeTitle is { } heading && heading.Focus()) homePage.ScrollControlIntoView(heading);
-        });
-        AddNavigation(menu, "trip", "vehicle_truck", "Viaje", "Trip", () => Navigate("trip"));
-        AddNavigation(menu, "journal", "book_open", "Diario", "Journal", () => Navigate("journal"));
-        AddNavigation(menu, "replay", "play_circle", "Repeticiones", "Replays", () => Navigate("replay"));
+        AddNavigation(menu, "home", "home", "Inicio", "Home", () => QueueNavigation("home"));
+        AddNavigation(menu, "trip", "vehicle_truck", "Viaje", "Trip", () => QueueNavigation("trip"));
+        AddNavigation(menu, "journal", "book_open", "Diario", "Journal", () => QueueNavigation("journal"));
+        AddNavigation(menu, "replay", "play_circle", "Repeticiones", "Replays", () => QueueNavigation("replay"));
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
-        AddNavigation(menu, "settings", "settings", "Ajustes", "Settings", () => ShowFromNavigation("settings", () => ShowSettings()));
+        AddNavigation(menu, "settings", "settings", "Ajustes", "Settings", () => QueueNavigation("settings"));
         AddRows(menu, new ShellRule { Margin = new Padding(0, 12, 0, 12) });
         AddNavigation(menu, "help", "question_circle", "Ayuda", "Help", ShowConnectionGuide);
         AddNavigation(menu, "about", "info", "Acerca de", "About", ShowAbout);
@@ -330,29 +337,42 @@ internal sealed partial class MainForm
 
     private void Navigate(string page, bool remember = true)
     {
-        if (page == currentPage && libraryPages.Count > 0)
+        if (page == currentPage)
         {
             while (libraryPages.Count > 1) GoBackInLibrary();
             return;
         }
-        var changedPage = currentPage != page;
-        if (changedPage && remember) AnimatePageChange(pageHost);
+        using var redraw = new UiRedrawScope(pageHost);
+        using var homeLayout = page == "home" ? new UiLayoutBatch(homePage) : null;
+        using var tripLayout = page == "trip" ? new UiLayoutBatch(tripShellPage) : null;
         pageHost.SuspendLayout();
         try
         {
-            ClearLibraryPages();
+            if (page == "settings") settingsReturnPage = currentPage is "" or "settings" ? "home" : currentPage;
+            RetainLibraryPages();
             currentPage = page;
-            UpdatePageTitle();
             homePage.Visible = page == "home";
             tripShellPage.Visible = page == "trip";
-            if (page == "journal") ShowHistory();
-            if (page == "replay") ShowRecordings();
-
-            foreach (var (key, button) in navigation) button.SetSelected(key == currentPage);
+            if (page is "journal" or "replay" or "settings" && !RestoreLibraryPages(page))
+            {
+                if (page == "journal") ShowHistory();
+                else if (page == "replay") ShowRecordings();
+                else BuildSettings();
+            }
+            UpdatePageTitle();
+            foreach (var (key, button) in navigation) button.SetSelected(key == page);
             ResizeShell();
         }
-        finally { pageHost.ResumeLayout(true); }
+        finally
+        {
+            homeLayout?.Dispose();
+            tripLayout?.Dispose();
+            pageHost.ResumeLayout(true);
+        }
         UpdateReplayVisibility();
+        RefreshTripView();
+        RenderDriveOverview(displayedDrive, driveConnected, driveSharing);
+        RenderPreview(displayedOutgoing, displayedSample);
         if (remember && page is "home" or "trip" && preferences.Features.LastSection != page)
             RememberLandingPage(page);
     }
@@ -378,10 +398,11 @@ internal sealed partial class MainForm
 
     private void ApplyShellTheme()
     {
-        if (Visible) AnimatePageChange(pageHost, UiMotion.Slow);
+        using var redraw = new UiRedrawScope(appShell);
         shellPalette = SystemInformation.HighContrast ? ShellPalette.System : (preferences.Theme switch
         {
-            "day" => ShellPalette.Day, "night" => ShellPalette.Dark,
+            "day" => ShellPalette.Day,
+            "night" => ShellPalette.Dark,
             _ => Application.SystemColorMode == SystemColorMode.Dark ? ShellPalette.Dark : ShellPalette.Day
         }).WithAccent(preferences.Features.AccentPreset);
         BackColor = shellPalette.Canvas;
@@ -476,6 +497,7 @@ internal sealed partial class MainForm
 
     private void RenderHomePresence(PresenceText? shown, PresenceText? outgoing, string? age)
     {
+        if (!homePage.Visible) return;
         hasShellStatus = true;
         shellGameOpen = gameRunning;
         shellDiscordReady = discordReady;
@@ -725,8 +747,12 @@ internal sealed partial class MainForm
             using var tint = new System.Drawing.Imaging.ImageAttributes();
             tint.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix
             {
-                Matrix00 = 0, Matrix11 = 0, Matrix22 = 0,
-                Matrix40 = ink.R / 255f, Matrix41 = ink.G / 255f, Matrix42 = ink.B / 255f
+                Matrix00 = 0,
+                Matrix11 = 0,
+                Matrix22 = 0,
+                Matrix40 = ink.R / 255f,
+                Matrix41 = ink.G / 255f,
+                Matrix42 = ink.B / 255f
             });
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.DrawImage(icon, bounds, 0, 0, icon.Width, icon.Height, GraphicsUnit.Pixel, tint);

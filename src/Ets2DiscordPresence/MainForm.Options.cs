@@ -108,21 +108,25 @@ internal sealed partial class MainForm
         AddRows(obs, browserState);
         BrowserOverlay? previewServer = null;
         var previewTimer = new System.Windows.Forms.Timer { Interval = 500 };
-        owner.FormClosed += (_, _) =>
+        owner.Disposed += (_, _) =>
         {
             previewTimer.Dispose();
             previewServer?.Dispose();
         };
         AppOptions PreviewOptions() => preferences.Features with
         {
-            ObsRoute = obsRoute.Checked, ObsDistance = obsDistance.Checked, ObsWaiting = waiting.Text.Trim(),
-            ObsSize = sizes[obsSize.SelectedIndex], ObsFont = fontSizes[font.SelectedIndex],
-            ObsOpacity = opacities[opacity.SelectedIndex], ObsRadius = radii[radius.SelectedIndex],
+            ObsRoute = obsRoute.Checked,
+            ObsDistance = obsDistance.Checked,
+            ObsWaiting = waiting.Text.Trim(),
+            ObsSize = sizes[obsSize.SelectedIndex],
+            ObsFont = fontSizes[font.SelectedIndex],
+            ObsOpacity = opacities[opacity.SelectedIndex],
+            ObsRadius = radii[radius.SelectedIndex],
             ObsPosition = position.SelectedIndex switch { 1 => "center", 2 => "right", _ => "left" }
         };
         void RefreshPreview()
         {
-            if (previewServer is null) return;
+            if (previewServer is null || !owner.Visible) return;
             var options = PreviewOptions();
             var sharing = preferences.Sharing && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow)
                 && !demo && demoScenario is null && !replayOpen;
@@ -174,21 +178,40 @@ internal sealed partial class MainForm
         {
             Layout = layout.SelectedIndex switch { 1 => "drive", 2 => "stream", _ => "full" },
             SidebarSize = sidebarSize.SelectedIndex switch { 1 => "compact", 2 => "full", _ => "auto" },
-            ReduceMotion = reduceMotion.Checked, TableTextPercent = tableSizes[tableSize.SelectedIndex],
-            Miles = units.SelectedIndex == 1, Clock12 = hours.SelectedIndex == 1, HighContrast = contrast.Checked,
+            ReduceMotion = reduceMotion.Checked,
+            TableTextPercent = tableSizes[tableSize.SelectedIndex],
+            Miles = units.SelectedIndex == 1,
+            Clock12 = hours.SelectedIndex == 1,
+            HighContrast = contrast.Checked,
             AlertMode = alerts.SelectedIndex switch { 1 => "job", 2 => "always", _ => "normal" },
             Pinned = pins.Where((key, index) => pinChecks[index].Checked).ToArray(),
-            RestNotice = rest.Checked, LowPower = lowPower.Checked, ReconnectNotice = reconnect.Checked,
-            RecognizeMap = gameMap.Checked, RecognizePhoto = gamePhoto.Checked, JournalFreeDrive = freeDrive.Checked,
-            SessionTimer = timerMode.SelectedIndex == 1, HideRoamingLocation = hideRoaming.Checked, HideDeliveryLocation = hideDelivery.Checked, PauseShortcut = pauseKey.Checked,
-            RoamTemplate = roam.Text.Trim(), DeliveryTemplate = delivery.Text.Trim(), ObsWaiting = waiting.Text.Trim(),
-            ObsFont = fontSizes[font.SelectedIndex], ObsOpacity = opacities[opacity.SelectedIndex], ObsRadius = radii[radius.SelectedIndex],
-            ObsSize = sizes[obsSize.SelectedIndex], ObsRoute = obsRoute.Checked, ObsDistance = obsDistance.Checked,
+            RestNotice = rest.Checked,
+            LowPower = lowPower.Checked,
+            ReconnectNotice = reconnect.Checked,
+            RecognizeMap = gameMap.Checked,
+            RecognizePhoto = gamePhoto.Checked,
+            JournalFreeDrive = freeDrive.Checked,
+            SessionTimer = timerMode.SelectedIndex == 1,
+            HideRoamingLocation = hideRoaming.Checked,
+            HideDeliveryLocation = hideDelivery.Checked,
+            PauseShortcut = pauseKey.Checked,
+            RoamTemplate = roam.Text.Trim(),
+            DeliveryTemplate = delivery.Text.Trim(),
+            ObsWaiting = waiting.Text.Trim(),
+            ObsFont = fontSizes[font.SelectedIndex],
+            ObsOpacity = opacities[opacity.SelectedIndex],
+            ObsRadius = radii[radius.SelectedIndex],
+            ObsSize = sizes[obsSize.SelectedIndex],
+            ObsRoute = obsRoute.Checked,
+            ObsDistance = obsDistance.Checked,
             ObsBrowser = browser.Checked || !current.ObsBrowser && preferences.Features.ObsBrowser,
             ObsPosition = position.SelectedIndex switch { 1 => "center", 2 => "right", _ => "left" },
-            AutoRecord = auto.Checked, RecordingLimitMb = limits[limit.SelectedIndex],
-            BackupFolder = backup.Text.Trim(), BackupIntervalDays = intervals[interval.SelectedIndex],
-            BackupKeep = keepCounts[backupKeep.SelectedIndex], WarnMissingBackup = backupWarning.Checked
+            AutoRecord = auto.Checked,
+            RecordingLimitMb = limits[limit.SelectedIndex],
+            BackupFolder = backup.Text.Trim(),
+            BackupIntervalDays = intervals[interval.SelectedIndex],
+            BackupKeep = keepCounts[backupKeep.SelectedIndex],
+            WarnMissingBackup = backupWarning.Checked
         };
     }
 
@@ -231,8 +254,12 @@ internal sealed partial class MainForm
     {
         var bar = Grid(1);
         bar.Padding = new Padding(8);
-        var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Buscar un ajuste…", "Find a setting…"),
-            AccessibleName = L("Buscar un ajuste", "Find a setting") };
+        var search = new TextBox
+        {
+            Dock = DockStyle.Top,
+            PlaceholderText = L("Buscar un ajuste…", "Find a setting…"),
+            AccessibleName = L("Buscar un ajuste", "Find a setting")
+        };
         var breadcrumb = TextLabel("", 9, true);
         void UpdateBreadcrumb()
         {
@@ -243,8 +270,13 @@ internal sealed partial class MainForm
         }
         tabs.SelectedIndexChanged += (_, _) => UpdateBreadcrumb();
         UpdateBreadcrumb();
-        var results = new ComboBox { Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false,
-            AccessibleName = L("Resultados de búsqueda", "Search results") };
+        var results = new ComboBox
+        {
+            Dock = DockStyle.Top,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Visible = false,
+            AccessibleName = L("Resultados de búsqueda", "Search results")
+        };
         var input = Grid(3);
         input.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -303,13 +335,13 @@ internal sealed partial class MainForm
             if (revealing) Reveal(results);
             if (query.Length == 0) return;
             foreach (var page in tabs.Pages)
-            foreach (var target in SettingsControls(page))
-            {
-                var text = target.AccessibleName ?? target.Text;
-                if (!string.IsNullOrWhiteSpace(text) && System.Globalization.CultureInfo.CurrentCulture.CompareInfo.IndexOf(text,
-                    query, System.Globalization.CompareOptions.IgnoreCase | System.Globalization.CompareOptions.IgnoreNonSpace) >= 0)
-                    results.Items.Add(new SettingsMatch(page, target, text));
-            }
+                foreach (var target in SettingsControls(page))
+                {
+                    var text = target.AccessibleName ?? target.Text;
+                    if (!string.IsNullOrWhiteSpace(text) && System.Globalization.CultureInfo.CurrentCulture.CompareInfo.IndexOf(text,
+                        query, System.Globalization.CompareOptions.IgnoreCase | System.Globalization.CompareOptions.IgnoreNonSpace) >= 0)
+                        results.Items.Add(new SettingsMatch(page, target, text));
+                }
             if (results.Items.Count == 0) results.Items.Add(L("Sin resultados", "No results"));
             results.SelectedIndex = 0;
         };

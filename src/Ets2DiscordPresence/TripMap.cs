@@ -6,6 +6,29 @@ internal sealed class TripMap : Control
 {
     private readonly List<(double X, double Z, bool Break, float? Speed, string? Event)> trail = [];
     private IReadOnlyList<MapCity> cities = [];
+    private MapCity[] citiesByX = [];
+    private readonly Dictionary<string, Size> labelSizes = [];
+
+    private IEnumerable<MapCity> CitiesInView(double x, double z, double radius)
+    {
+        var lower = 0;
+        var upper = citiesByX.Length;
+        while (lower < upper)
+        {
+            var middle = lower + (upper - lower) / 2;
+            if (citiesByX[middle].X < x - radius) lower = middle + 1;
+            else upper = middle;
+        }
+        for (var index = lower; index < citiesByX.Length && citiesByX[index].X <= x + radius; index++)
+            if (Math.Abs(citiesByX[index].Z - z) <= radius) yield return citiesByX[index];
+    }
+
+    protected override void OnFontChanged(EventArgs e)
+    {
+        base.OnFontChanged(e);
+        labelSizes?.Clear();
+        Invalidate();
+    }
     private MapCity? destination;
     private MapCity? origin;
     private MapCity? focusCity;
@@ -30,8 +53,14 @@ internal sealed class TripMap : Control
 
     internal static string EventSymbol(string? kind) => kind switch
     {
-        "pickup" => "↑", "delivery" => "✓", "fuel" => "+", "rest" => "Ⅱ", "ferry" => "≈",
-        "route_changed" => "↻", string value when value.StartsWith("border:", StringComparison.Ordinal) => "⚑", _ => "◆"
+        "pickup" => "↑",
+        "delivery" => "✓",
+        "fuel" => "+",
+        "rest" => "Ⅱ",
+        "ferry" => "≈",
+        "route_changed" => "↻",
+        string value when value.StartsWith("border:", StringComparison.Ordinal) => "⚑",
+        _ => "◆"
     };
     private bool headingUp;
     private bool follow;
@@ -233,8 +262,11 @@ internal sealed class TripMap : Control
     {
         var delta = e.KeyCode switch
         {
-            Keys.Up => new Point(0, 24), Keys.Down => new Point(0, -24),
-            Keys.Left => new Point(24, 0), Keys.Right => new Point(-24, 0), _ => Point.Empty
+            Keys.Up => new Point(0, 24),
+            Keys.Down => new Point(0, -24),
+            Keys.Left => new Point(24, 0),
+            Keys.Right => new Point(-24, 0),
+            _ => Point.Empty
         };
         if (e.KeyCode == Keys.Home) Recenter();
         else if (delta != Point.Empty)
@@ -313,7 +345,12 @@ internal sealed class TripMap : Control
     {
         english = isEnglish;
         light = isLight;
-        cities = catalog.Cities;
+        if (!ReferenceEquals(cities, catalog.Cities))
+        {
+            cities = catalog.Cities;
+            citiesByX = cities.OrderBy(city => city.X).ToArray();
+            labelSizes.Clear();
+        }
         var key = demo ? "demo" : snapshot?.OnJob == true ? snapshot.Signals?.JobKey + snapshot.Signals?.Deadline : "free";
         var startedNewTrip = snapshot is not null && key != tripKey;
         if (startedNewTrip)
@@ -441,12 +478,25 @@ internal sealed class TripMap : Control
         using var track = new Pen(accent, 2);
         using var olderTrack = new Pen(Color.FromArgb(125, accent), 1.5f);
         using var slow = new Pen(light ? Color.DarkOrange : Color.Gold, 2);
-        if (showTrack)
-            for (var i = 1; i < trail.Count; i++)
-                if (!trail[i].Break)
-                    g.DrawLine(colorSpeed && trail[i].Speed is { } speed && Math.Abs(speed) < 12 ? slow
-                        : i < trail.Count - 32 ? olderTrack : track,
-                        Place(trail[i - 1].X, trail[i - 1].Z), Place(trail[i].X, trail[i].Z));
+        if (showTrack && trail.Count > 1)
+        {
+            var previous = Place(trail[0].X, trail[0].Z);
+            for (var index = 1; index < trail.Count; index++)
+            {
+                var item = trail[index];
+                var point = Place(item.X, item.Z);
+                if (item.Break) { previous = point; continue; }
+                var dx = point.X - previous.X;
+                var dy = point.Y - previous.Y;
+                if (dx * dx + dy * dy < 4 && index < trail.Count - 1 && item.Event is null) continue;
+                var intersects = Math.Max(previous.X, point.X) >= 0 && Math.Min(previous.X, point.X) <= Width
+                    && Math.Max(previous.Y, point.Y) >= 24 && Math.Min(previous.Y, point.Y) <= Height;
+                if (intersects)
+                    g.DrawLine(colorSpeed && item.Speed is { } speed && Math.Abs(speed) < 12 ? slow
+                        : index < trail.Count - 32 ? olderTrack : track, previous, point);
+                previous = point;
+            }
+        }
 
         if (showTerminals && truck is { } currentTruck && destination is { } goalCity)
         {
@@ -455,28 +505,37 @@ internal sealed class TripMap : Control
         }
 
         var occupied = new List<Rectangle> { new(7, Height - 39, ruler + 24, 35), new(0, 0, Width, 24) };
-        void Marker(string name, PointF point, Color color, int size, bool priority = false, bool stop = false)
+        void Marker(string name, PointF point, Color color, int size, bool stop = false)
         {
             if (point.X < 8 || point.X > Width - 8 || point.Y < 30 || point.Y > Height - 10) return;
             using var brush = new SolidBrush(color);
             if (stop) g.FillRectangle(brush, point.X - size / 2f, point.Y - size / 2f, size, size);
             else g.FillEllipse(brush, point.X - size / 2f, point.Y - size / 2f, size, size);
-            var measured = TextRenderer.MeasureText(name, Font);
-            var box = new Rectangle(Math.Clamp((int)point.X + 7, 2, Math.Max(2, Width - measured.Width)),
-                Math.Max(26, (int)point.Y - measured.Height), measured.Width, measured.Height);
-            if (occupied.Any(other => other.IntersectsWith(box)))
+            if (!labelSizes.TryGetValue(name, out var measured))
             {
-                if (!priority) return;
-                box.Y = Math.Clamp((int)point.Y + 7, 26, Math.Max(26, Height - measured.Height - 6));
+                if (labelSizes.Count >= 512) labelSizes.Clear();
+                measured = TextRenderer.MeasureText(name, Font);
+                labelSizes[name] = measured;
             }
+            measured.Width = Math.Min(measured.Width, Math.Max(1, Width - 12));
+            var right = Math.Clamp((int)point.X + 7, 2, Math.Max(2, Width - measured.Width - 4));
+            var left = Math.Clamp((int)point.X - measured.Width - 7, 2, Math.Max(2, Width - measured.Width - 4));
+            var above = Math.Clamp((int)point.Y - measured.Height, 26, Math.Max(26, Height - measured.Height - 6));
+            var below = Math.Clamp((int)point.Y + 7, 26, Math.Max(26, Height - measured.Height - 6));
+            Rectangle[] candidates = [new(right, above, measured.Width, measured.Height),
+                new(right, below, measured.Width, measured.Height), new(left, above, measured.Width, measured.Height),
+                new(left, below, measured.Width, measured.Height)];
+            var box = candidates.FirstOrDefault(candidate => !occupied.Any(other => other.IntersectsWith(candidate)));
+            if (box.IsEmpty) return;
             using var backing = new SolidBrush(background);
             g.FillRectangle(backing, Rectangle.Inflate(box, 2, 1));
-            TextRenderer.DrawText(g, name, Font, box, color);
+            TextRenderer.DrawText(g, name, Font, box, color,
+                TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             occupied.Add(box);
         }
 
         if (showTerminals && destination is { } target)
-            Marker(target.Name, Place(target.X, target.Z), accent, 12, priority: true, stop: true);
+            Marker(target.Name, Place(target.X, target.Z), accent, 12, stop: true);
         if (showTerminals && origin is { } start) Marker(start.Name, Place(start.X, start.Z), label, 8);
         if (truck is not null)
         {
@@ -502,14 +561,16 @@ internal sealed class TripMap : Control
         if (highlightedReplayEvent is { } eventWithPulse) DrawPulse(Place(eventWithPulse.Position.X, eventWithPulse.Position.Z));
         if (focusCity is { } selected) Marker(selected.Name, Place(selected.X, selected.Z), accent, 8);
         if (highlightedReplayEvent is { } highlight)
-            Marker(highlight.Symbol, Place(highlight.Position.X, highlight.Position.Z), accent, 13, priority: true);
+            Marker(highlight.Symbol, Place(highlight.Position.X, highlight.Position.Z), accent, 13);
         if (showEvents)
             foreach (var point in trail.Where(point => point.Event is not null).TakeLast(24))
             {
                 var eventCaption = point.Event switch
                 {
-                    "pickup" => english ? "Pickup" : "Recogida", "delivery" => english ? "Delivery" : "Entrega",
-                    "fuel" => english ? "Refueling" : "Repostaje", "rest" => english ? "Rest" : "Descanso",
+                    "pickup" => english ? "Pickup" : "Recogida",
+                    "delivery" => english ? "Delivery" : "Entrega",
+                    "fuel" => english ? "Refueling" : "Repostaje",
+                    "rest" => english ? "Rest" : "Descanso",
                     "ferry" => "Ferry",
                     "route_changed" => english ? "Route recalculated" : "Ruta recalculada",
                     string border when border.StartsWith("border:", StringComparison.Ordinal) =>
@@ -519,8 +580,12 @@ internal sealed class TripMap : Control
                 var symbol = EventSymbol(point.Event);
                 Marker($"{symbol} {eventCaption}", Place(point.X, point.Z), accent, 6);
             }
+        var visibleCenterX = centerX + (-pan.X * cosine + pan.Y * sine) / scale;
+        var visibleCenterZ = centerZ + (-pan.X * sine - pan.Y * cosine) / scale;
+        var visibleRadius = Math.Sqrt((double)Width * Width + (double)Height * Height) / (2 * scale);
         if (showCities)
-            foreach (var city in cities.Where(city => ClientRectangle.Contains(Point.Round(Place(city.X, city.Z))))
+            foreach (var city in CitiesInView(visibleCenterX, visibleCenterZ, visibleRadius)
+                .Where(city => ClientRectangle.Contains(Point.Round(Place(city.X, city.Z))))
                 .OrderBy(city => Math.Abs(centerX - city.X) + Math.Abs(centerZ - city.Z)).Take(12))
                 if (city != destination && city != origin && city != focusCity)
                     Marker(city.Name, Place(city.X, city.Z), label, 4);

@@ -11,9 +11,16 @@ internal sealed partial class MainForm
     private void ShowRecordings()
     {
         var window = new LibraryPage(L("Repeticiones", "Replays"));
-        var list = new ListBox { Dock = DockStyle.Fill, SelectionMode = SelectionMode.MultiExtended,
-            AccessibleName = L("Grabaciones locales", "Local recordings"), FormattingEnabled = true,
-            DrawMode = DrawMode.OwnerDrawFixed, IntegralHeight = false };
+        var rowText = new Dictionary<string, (string Title, string Detail)>(StringComparer.OrdinalIgnoreCase);
+        var list = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            SelectionMode = SelectionMode.MultiExtended,
+            AccessibleName = L("Grabaciones locales", "Local recordings"),
+            FormattingEnabled = true,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            IntegralHeight = false
+        };
         void SizeRows() => list.ItemHeight = Math.Min(255, Math.Max(56 * list.DeviceDpi / 96, list.Font.Height * 2 + 12));
         SizeRows();
         list.FontChanged += (_, _) => SizeRows();
@@ -27,19 +34,24 @@ internal sealed partial class MainForm
             e.Graphics.FillRectangle(fill, e.Bounds);
             using var line = new Pen(selected ? palette.Accent : palette.Border);
             e.Graphics.DrawLine(line, e.Bounds.Left + 8, e.Bounds.Bottom - 1, e.Bounds.Right - 8, e.Bounds.Bottom - 1);
-            var heading = item.Metadata is { Origin: { Length: > 0 } origin, Destination: { Length: > 0 } destination }
-                ? $"{origin} → {destination}" : Path.GetFileNameWithoutExtension(item.Path);
-            if (item.Favorite) heading = $"★ {heading}";
-            var metadata = string.Join("   ·   ", new[] { Kind(item), item.Date.LocalDateTime.ToString("g"), $"{item.Bytes / 1_000_000d:N2} MB",
+            if (!rowText.TryGetValue(item.Path, out var text))
+            {
+                var heading = item.Metadata is { Origin: { Length: > 0 } origin, Destination: { Length: > 0 } destination }
+                    ? $"{origin} → {destination}" : Path.GetFileNameWithoutExtension(item.Path);
+                if (item.Favorite) heading = $"★ {heading}";
+                var metadata = string.Join("   ·   ", new[] { Kind(item), item.Date.LocalDateTime.ToString("g"), $"{item.Bytes / 1_000_000d:N2} MB",
                 item.Metadata?.Duration is { } duration && duration is >= 0 and <= 604_800_000 ? ReplayTime(duration) : "",
                 item.Metadata?.MarkersCount is > 0 ? $"◆ {item.Metadata.MarkersCount}" : "" }
-                .Where(value => value.Length != 0));
+                    .Where(value => value.Length != 0));
+                text = (heading, metadata);
+                rowText[item.Path] = text;
+            }
             var row = Rectangle.Inflate(e.Bounds, -12, -4);
             row.Height /= 2;
             const TextFormatFlags flags = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter;
-            TextRenderer.DrawText(e.Graphics, heading, list.Font, row, palette.Text, flags);
+            TextRenderer.DrawText(e.Graphics, text.Title, list.Font, row, palette.Text, flags);
             row.Y += row.Height;
-            TextRenderer.DrawText(e.Graphics, metadata, list.Font, row, palette.Muted, flags);
+            TextRenderer.DrawText(e.Graphics, text.Detail, list.Font, row, palette.Muted, flags);
             if (e.State.HasFlag(DrawItemState.Focus))
                 ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(e.Bounds, -2, -2), palette.Text, palette.Hover);
         };
@@ -58,6 +70,7 @@ internal sealed partial class MainForm
         var bar = ToolBar();
         var record = MakeButton("");
         var play = MakeButton(L("Reproducir", "Play"));
+        play.Tag = "primary";
         var open = MakeButton(L("Abrir archivo…", "Open file…"));
         var delete = MakeButton(L("Eliminar", "Delete"));
         delete.Tag = "danger";
@@ -68,9 +81,24 @@ internal sealed partial class MainForm
         var trash = MakeButton(L("Papelera", "Trash"));
         var favorite = MakeButton(L("Favorito", "Favorite"));
         var upgrade = MakeButton(L("Actualizar metadatos…", "Update metadata…"));
-        bar.Controls.AddRange([record, pause, marker, play, compare, open, delete, compress, trash, favorite, upgrade]);
+        bar.Controls.AddRange([record, pause, marker, play, open, favorite]);
+        var more = MakeButton(L("Más acciones", "More actions"));
+        more.AccessibleName = L("Más acciones de grabaciones", "More recording actions");
+        var overflow = new ContextMenuStrip();
+        foreach (var action in new[] { compare, compress, upgrade, delete, trash })
+        {
+            var item = overflow.Items.Add(action.Text, null, (_, _) => action.PerformClick());
+            overflow.Opening += (_, _) => item.Enabled = action.Enabled;
+        }
+        more.Click += (_, _) => overflow.Show(more, new Point(0, more.Height));
+        bar.Controls.Add(more);
+        window.Disposed += (_, _) =>
+        {
+            overflow.Dispose();
+            foreach (var action in new[] { compare, compress, upgrade, delete, trash }) action.Dispose();
+        };
         var heading = Grid(1);
-        heading.Padding = new Padding(12, 10, 12, 5);
+        heading.Padding = new Padding(16, 12, 16, 8);
         var info = TextLabel("", 10);
         var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Buscar ciudad, camión, fecha o marcador…", "Find city, truck, date or marker…") };
         var favoritesOnly = MakeButton(L("Solo favoritos", "Favorites only"));
@@ -85,49 +113,121 @@ internal sealed partial class MainForm
         window.Controls.Add(emptyState);
         window.Controls.Add(heading);
         RecordingItem[] items = [];
+        var catalog = new Dictionary<string, (long Bytes, DateTime Modified, RecordingItem Item)>(StringComparer.OrdinalIgnoreCase);
+        var loading = false;
+        var catalogReady = false;
+        long nextCatalogCheck = 0;
+        var loadAgain = false;
+        CancellationTokenSource? catalogLoad = null;
+        var searchDelay = new System.Windows.Forms.Timer { Interval = 180 };
+        searchDelay.Tick += (_, _) => { searchDelay.Stop(); Filter(); };
+        window.Disposed += (_, _) => searchDelay.Dispose();
         void Filter()
         {
-            list.BeginUpdate();
-            list.Items.Clear();
-            list.Items.AddRange(items.Where(item => (!onlyFavorites || item.Favorite) && (item.Search + " " + Kind(item)).Contains(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase)).Cast<object>().ToArray());
-            if (list.Items.Count > 0) list.SelectedIndex = 0;
-            list.EndUpdate();
-            emptyState.Visible = list.Items.Count == 0;
-            list.Visible = !emptyState.Visible;
+            var query = search.Text.Trim();
+            var matches = items.Where(item => (!onlyFavorites || item.Favorite)
+                && (item.Search + " " + Kind(item)).Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            if (!list.Items.Cast<RecordingItem>().SequenceEqual(matches))
+            {
+                var selected = list.SelectedItems.Cast<RecordingItem>().Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var top = Math.Max(0, list.TopIndex);
+                list.BeginUpdate();
+                try
+                {
+                    list.Items.Clear();
+                    list.Items.AddRange(matches.Cast<object>().ToArray());
+                    for (var index = 0; index < matches.Length; index++)
+                        if (selected.Contains(matches[index].Path)) list.SetSelected(index, true);
+                    if (list.Items.Count > 0 && list.SelectedIndex < 0) list.SelectedIndex = 0;
+                    if (list.Items.Count > 0) list.TopIndex = Math.Min(top, list.Items.Count - 1);
+                }
+                finally { list.EndUpdate(); }
+            }
+            emptyState.Visible = !loading && matches.Length == 0;
+            emptyState.AccessibleName = items.Length == 0 ? L("Sin grabaciones", "No recordings") : L("Sin resultados", "No results");
+            emptyState.AccessibleDescription = items.Length == 0
+                ? L("Graba un viaje o abre un archivo para empezar.", "Record a drive or open a file to get started.")
+                : L("Prueba otra búsqueda o desactiva el filtro de favoritos.", "Try another search or turn off the favorites filter.");
+            emptyState.Invalidate();
+            list.Visible = matches.Length > 0;
             UpdateButtons();
         }
-        var loading = false;
         async void Populate()
         {
-            if (loading || window.IsDisposed) return;
+            if (window.IsDisposed) return;
+            if (loading) { loadAgain = true; return; }
+            loadAgain = false;
             loading = true;
+            catalogLoad = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            var token = catalogLoad.Token;
             var activePath = recordingPath;
-            info.Text = L("Cargando grabaciones…", "Loading recordings…");
+            if (!catalogReady)
+            {
+                info.Text = L("Cargando grabaciones…", "Loading recordings…");
+                emptyState.Visible = false;
+            }
             try
             {
                 var loaded = await Task.Run(() =>
                 {
                     var favorites = LocalData.RecordingFavorites();
-                    return LocalData.RecordingFiles().Where(file => file != activePath)
-                        .Select(file => RecordingItem.FromFile(file, favorites.Contains(LocalData.RecordingKey(file)))).ToArray();
-                });
-                if (window.IsDisposed) return;
+                    var paths = LocalData.RecordingFiles().Where(file => file != activePath).ToArray();
+                    var existing = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    foreach (var missing in catalog.Keys.Where(path => !existing.Contains(path)).ToArray()) catalog.Remove(missing);
+                    return paths.Select(path =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        var file = new FileInfo(path);
+                        if (!catalog.TryGetValue(path, out var cached) || cached.Bytes != file.Length || cached.Modified != file.LastWriteTimeUtc)
+                        {
+                            cached = (file.Length, file.LastWriteTimeUtc, RecordingItem.FromFile(path, false));
+                            catalog[path] = cached;
+                        }
+                        var favorite = favorites.Contains(LocalData.RecordingKey(path));
+                        return cached.Item.Favorite == favorite ? cached.Item : cached.Item with { Favorite = favorite };
+                    }).ToArray();
+                }, token);
+                if (window.IsDisposed || token.IsCancellationRequested) return;
                 items = loaded.Where(item => item.Path != recordingPath).ToArray();
+                catalogReady = true;
+                nextCatalogCheck = Environment.TickCount64 + 1000;
+                rowText.Clear();
                 info.Text = recording is not null ? L("Grabando el viaje en segundo plano.", "Recording the trip in the background.")
-                    : items.Length == 0 ? L("Sin repeticiones · Inicia una grabación o abre un archivo.", "No replays · Start recording or open a file.")
-                    : L("Elige un archivo para volver a recorrer el viaje.", "Choose a file to revisit the trip.");
+                    : L($"{items.Length:N0} grabaciones locales", $"{items.Length:N0} local recordings");
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
                 if (window.IsDisposed) return;
-                info.Text = L("No se pudo abrir la carpeta de grabaciones.", "The recordings folder could not be opened.");
+                info.Text = L("No se pudo abrir la carpeta. Pulsa Reintentar.", "The folder could not be opened. Select Retry.");
             }
-            finally { loading = false; }
-            record.Text = recording is null ? L("Empezar a grabar", "Start recording") : L("Detener grabación", "Stop recording");
-            Filter();
+            finally
+            {
+                loading = false;
+                catalogLoad.Dispose();
+                catalogLoad = null;
+                if (!window.IsDisposed)
+                {
+                    record.Text = recording is null ? L("Empezar a grabar", "Start recording") : L("Detener grabación", "Stop recording");
+                    Filter();
+                    if (loadAgain && window.Visible) Populate();
+                }
+            }
         }
+        var retryLoad = MakeButton(L("Reintentar", "Retry"));
+        retryLoad.Click += (_, _) => Populate();
+        info.TextChanged += (_, _) => retryLoad.Visible = info.Text.Contains(L("Reintentar", "Retry"));
+        retryLoad.Visible = false;
+        filters.Controls.Add(retryLoad);
+        window.Activated = () =>
+        {
+            if (!catalogReady || Environment.TickCount64 >= nextCatalogCheck) Populate();
+            else UpdateButtons();
+        };
+        window.Deactivated = () => { searchDelay.Stop(); catalogLoad?.Cancel(); };
         void UpdateButtons()
         {
+            record.Text = recording is null ? L("Empezar a grabar", "Start recording") : L("Detener grabación", "Stop recording");
             play.Enabled = delete.Enabled = list.SelectedItems.Count == 1;
             favorite.Enabled = play.Enabled;
             upgrade.Enabled = play.Enabled && list.SelectedItem is RecordingItem { Metadata.JourneyType: null } or RecordingItem { Metadata: null };
@@ -135,6 +235,7 @@ internal sealed partial class MainForm
             compare.Enabled = list.SelectedItems.Count == 2;
             compress.Enabled = list.SelectedItems.Count == 1 && list.SelectedItem is RecordingItem selected
                 && selected.Path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase);
+            pause.Visible = marker.Visible = recording is not null;
             pause.Enabled = recording is not null;
             marker.Enabled = recording is not null && !recordingPaused;
             pause.Text = recordingPaused ? L("Reanudar grabación", "Resume recording") : L("Pausar grabación", "Pause recording");
@@ -148,7 +249,7 @@ internal sealed partial class MainForm
             StyleButton(favoritesOnly);
             Filter();
         };
-        search.TextChanged += (_, _) => Filter();
+        search.TextChanged += (_, _) => { searchDelay.Stop(); searchDelay.Start(); };
         favorite.Click += (_, _) =>
         {
             if (list.SelectedItem is RecordingItem item && DataAction(window, () => LocalData.SetRecordingFavorite(item.Path, !item.Favorite))) Populate();
@@ -234,7 +335,8 @@ internal sealed partial class MainForm
 
     private sealed record RecordingItem(string Path, TelemetryReplay.RecordingMetadata? Metadata, DateTimeOffset Date, long Bytes, bool Favorite)
     {
-        public string Search => $"{this} {Metadata?.Truck} {Date:yyyy-MM-dd} {string.Join(' ', Metadata?.MarkerTitles ?? [])}";
+        private string? searchText;
+        public string Search => searchText ??= $"{this} {Metadata?.Truck} {Date:yyyy-MM-dd} {string.Join(' ', Metadata?.MarkerTitles ?? [])}";
         public override string ToString() => $"{(Favorite ? "★ " : "")}{Date.LocalDateTime:g} · {Bytes / 1_000_000d:N2} MB" +
             (Metadata?.SchemaVersion == 1 ? " · ↺" : "") +
             (Metadata?.Duration is { } duration && duration >= 0 && duration <= 604_800_000
@@ -254,12 +356,51 @@ internal sealed partial class MainForm
         }
     }
 
-    private void ShowPlayback(string path, IWin32Window owner)
+    private async void ShowPlayback(string path, IWin32Window owner)
     {
-        TelemetryReplay.RecordingRead? read = null;
-        if (!DataAction(owner, () => read = TelemetryReplay.ReadDetailed(path)) || read is null) return;
-        var data = read.Frames;
         var window = new LibraryPage(L("Repetición del viaje", "Trip replay"), playsRecording: true);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        var token = cancellation.Token;
+        window.Leaving += () => cancellation.Cancel();
+        var loading = Grid(1);
+        loading.Padding = new Padding(24);
+        var status = TextLabel(L("Preparando la grabación…", "Preparing recording…"), 16, true);
+        var progress = new ProgressBar { Dock = DockStyle.Top, Height = 8, AccessibleName = L("Lectura de la grabación", "Reading recording") };
+        var cancel = MakeButton(L("Cancelar y volver", "Cancel and go back"));
+        cancel.Click += (_, _) => GoBackInLibrary();
+        AddRows(loading, status, progress, cancel);
+        window.Controls.Add(loading);
+        StyleTool(window);
+        PushLibraryPage(window);
+        var updates = new Progress<int>(value =>
+        {
+            if (!progress.IsDisposed && !token.IsCancellationRequested) progress.Value = value;
+        });
+        try
+        {
+            var read = await Task.Run(() => TelemetryReplay.ReadDetailed(path, token, updates), token);
+            if (window.IsDisposed || token.IsCancellationRequested) return;
+            loading.Dispose();
+            window.Leaving = null;
+            BuildPlayback(path, read, window);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            if (window.IsDisposed) return;
+            progress.Visible = false;
+            status.Text = L("No se pudo abrir esta grabación.", "This recording could not be opened.");
+            var retry = MakeButton(L("Reintentar", "Retry"));
+            retry.Click += (_, _) => { GoBackInLibrary(); ShowPlayback(path, owner); };
+            AddRows(loading, retry);
+            StyleButton(retry);
+        }
+        finally { window.Leaving = null; }
+    }
+
+    private void BuildPlayback(string path, TelemetryReplay.RecordingRead read, LibraryPage window)
+    {
+        var data = read.Frames;
         var routeName = string.Join(" → ", new[] { read.Metadata?.Origin, read.Metadata?.Destination }
             .Where(city => !string.IsNullOrWhiteSpace(city)));
         var routeTitle = read.Metadata?.JourneyType switch
@@ -288,10 +429,18 @@ internal sealed partial class MainForm
         var graph = new SpeedChart(data, shellPalette.Surface, shellPalette.Text, shellPalette.Accent)
         {
             AccessibleName = L("Gráfico de velocidad. Pulsa para saltar a ese momento.", "Speed chart. Click to seek."),
-            Height = 80, Dock = DockStyle.Top
+            Height = 80,
+            Dock = DockStyle.Top
         };
-        var slider = new TrackBar { Maximum = (int)data[^1].ElapsedMs, TickStyle = TickStyle.None,
-            SmallChange = 1000, LargeChange = 10_000, Dock = DockStyle.Top, AccessibleName = L("Tiempo de reproducción", "Replay time") };
+        var slider = new TrackBar
+        {
+            Maximum = (int)data[^1].ElapsedMs,
+            TickStyle = TickStyle.None,
+            SmallChange = 1000,
+            LargeChange = 10_000,
+            Dock = DockStyle.Top,
+            AccessibleName = L("Tiempo de reproducción", "Replay time")
+        };
         var eventTips = new ToolTip { InitialDelay = 200 };
         var eventTicks = new Panel { Height = 22, Dock = DockStyle.Top, TabStop = false, AccessibleName = L("Eventos de la grabación", "Recording events") };
         (long Elapsed, string Kind)[] ticks = [];
@@ -310,8 +459,12 @@ internal sealed partial class MainForm
                 }
                 var (color, height) = kind switch
                 {
-                    "pickup" => (Accent, 14), "delivery" => (Color.SeaGreen, 16), "ferry" => (Color.CornflowerBlue, 11),
-                    "fuel" => (Color.DarkOrange, 13), "route_changed" => (Color.MediumVioletRed, 15), _ => (Foreground, 8)
+                    "pickup" => (Accent, 14),
+                    "delivery" => (Color.SeaGreen, 16),
+                    "ferry" => (Color.CornflowerBlue, 11),
+                    "fuel" => (Color.DarkOrange, 13),
+                    "route_changed" => (Color.MediumVioletRed, 15),
+                    _ => (Foreground, 8)
                 };
                 using var stroke = new Pen(color, 2);
                 using var fill = new SolidBrush(color);
@@ -352,8 +505,14 @@ internal sealed partial class MainForm
         var speed = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 76, AccessibleName = L("Velocidad de reproducción", "Playback speed") };
         speed.Items.AddRange(["0.25×", "0.5×", "1×", "2×", "4×", "8×"]);
         speed.SelectedIndex = 2;
-        var moments = new ListBox { Dock = DockStyle.Right, Width = 248, DrawMode = DrawMode.OwnerDrawVariable, IntegralHeight = false,
-            AccessibleName = L("Eventos del viaje", "Trip events") };
+        var moments = new ListBox
+        {
+            Dock = DockStyle.Right,
+            Width = 248,
+            DrawMode = DrawMode.OwnerDrawVariable,
+            IntegralHeight = false,
+            AccessibleName = L("Eventos del viaje", "Trip events")
+        };
         void SizeEvents() => moments.Width = Math.Clamp(window.ClientSize.Width / 3, 160, 300);
         window.ClientSizeChanged += (_, _) => SizeEvents();
         SizeEvents();
@@ -374,8 +533,11 @@ internal sealed partial class MainForm
         };
         string EventName(string kind) => kind switch
         {
-            "pickup" => L("Recogida", "Pickup"), "ferry" => "Ferry", "delivery" => L("Entrega", "Delivery"),
-            "fuel" => L("Repostaje", "Refueling"), "rest" => L("Descanso", "Rest"),
+            "pickup" => L("Recogida", "Pickup"),
+            "ferry" => "Ferry",
+            "delivery" => L("Entrega", "Delivery"),
+            "fuel" => L("Repostaje", "Refueling"),
+            "rest" => L("Descanso", "Rest"),
             "route_changed" => L("Ruta recalculada", "Route recalculated"),
             _ when kind.StartsWith("border:", StringComparison.Ordinal) => L("Frontera", "Border") + $" · {Countries.Name(kind[7..], English) ?? kind[7..]}",
             _ => kind
@@ -459,8 +621,12 @@ internal sealed partial class MainForm
         {
             graph.SetMetric(mode.SelectedIndex);
             AnimateText(units, shellPalette.Accent);
-            units.Text = mode.SelectedIndex switch { 1 => L("Combustible · L", "Fuel · L"),
-                2 => L("Distancia restante · km", "Remaining distance · km"), _ => L("Velocidad · km/h", "Speed · km/h") };
+            units.Text = mode.SelectedIndex switch
+            {
+                1 => L("Combustible · L", "Fuel · L"),
+                2 => L("Distancia restante · km", "Remaining distance · km"),
+                _ => L("Velocidad · km/h", "Speed · km/h")
+            };
         };
         var playerRow = Grid(1);
         playerRow.BackColor = shellPalette.Surface;
@@ -670,7 +836,7 @@ internal sealed partial class MainForm
             eventTips.Dispose();
             extra.Dispose();
         };
-        PushLibraryPage(window);
+
     }
 
     private static string ReplayTime(long ms)
@@ -743,8 +909,11 @@ internal sealed partial class MainForm
 
         public void SetElapsed(long value)
         {
+            var previous = (int)PositionAt(elapsed);
+            var current = (int)PositionAt(value);
             elapsed = value;
-            Invalidate();
+            if (previous == current) return;
+            Invalidate(new Rectangle(Math.Min(previous, current) - 3, 0, Math.Abs(current - previous) + 7, Height));
         }
 
         private readonly object loopMotion = new();
@@ -821,13 +990,25 @@ internal sealed partial class MainForm
                 TextRenderer.DrawText(g, caption, Font, new Point(x, Height - 19), ink);
             }
             PointF? previous = null;
+            PointF? bucketLast = null;
+            int bucket = -1;
+            float low = 0, high = 0;
+            void FlushBucket()
+            {
+                if (bucketLast is not { } last) return;
+                if (high > low) g.DrawLine(trace, last.X, low, last.X, high);
+                previous = last;
+                bucketLast = null;
+            }
             long? missingSince = null;
             using var gap = new HatchBrush(HatchStyle.ForwardDiagonal, Color.FromArgb(100, ink), Color.Transparent);
             foreach (var frame in frames)
             {
                 if (Value(frame) is not { } value)
                 {
+                    FlushBucket();
                     previous = null;
+                    bucket = -1;
                     missingSince ??= frame.ElapsedMs;
                     continue;
                 }
@@ -839,9 +1020,19 @@ internal sealed partial class MainForm
                 }
                 var point = new PointF(42 + frame.ElapsedMs * (float)PlotWidth / maximum,
                     7 + height * (1 - Math.Clamp(value, 0, ceiling) / ceiling));
-                if (previous is { } last) g.DrawLine(trace, last, point);
-                previous = point;
+                var column = (int)point.X;
+                if (column != bucket)
+                {
+                    FlushBucket();
+                    if (previous is { } last) g.DrawLine(trace, last, point);
+                    bucket = column;
+                    low = high = point.Y;
+                }
+                low = Math.Min(low, point.Y);
+                high = Math.Max(high, point.Y);
+                bucketLast = point;
             }
+            FlushBucket();
             if (missingSince is { } remaining)
                 g.FillRectangle(gap, PositionAt(remaining), 7, Math.Max(1, PositionAt(maximum) - PositionAt(remaining)), height);
         }

@@ -97,6 +97,37 @@ internal sealed partial class MainForm
         return $"{(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}";
     }
 
+    private sealed record TripView(TelemetrySnapshot? Trip, string? City, PresenceText? Presence, long Now,
+        bool Running, bool Connected, string? ScreenTitle);
+    private TripView? pendingTripView;
+    private TripView? renderedTripView;
+    private AppSettings? renderedTripSettings;
+    private bool renderedFullScreen;
+
+    private void RefreshTripView()
+    {
+        if (!tripShellPage.Visible || pendingTripView is not { } view) return;
+        if (ReferenceEquals(renderedTripView, view) && ReferenceEquals(renderedTripSettings, preferences)
+            && renderedFullScreen == fullScreen) return;
+        using var redraw = new UiRedrawScope(tripShellPage);
+        using var layout = new UiLayoutBatch(tripShellPage);
+        try
+        {
+            RenderTrip(view.Trip, view.City, view.Presence);
+            if (view.ScreenTitle is { } title) travelMode.Text = title;
+            RenderExtras(view.Trip, view.Now, view.Running, view.Connected);
+            RenderDashboard(view.Trip, view.Running, view.Connected, view.Now);
+            renderedTripView = view;
+            renderedTripSettings = preferences;
+            renderedFullScreen = fullScreen;
+        }
+        finally
+        {
+            layout.Dispose();
+            tripShellPage.PerformLayout();
+        }
+    }
+
     private void RenderDashboard(TelemetrySnapshot? displayed, bool running, bool connected, long now)
     {
         var options = preferences.Features;
@@ -137,7 +168,7 @@ internal sealed partial class MainForm
         }
         travelMode.ForeColor = options.HighContrast ? SystemColors.HighlightText : displayed is { Paused: false } ? shellPalette.Accent : shellPalette.Text;
         travelMode.BackColor = options.HighContrast ? SystemColors.Highlight : Color.Transparent;
-        timer.Interval = options.LowPower && !Visible && displayed?.OnJob != true && recording is null && !options.AutoRecord ? 6000 : 2000;
+
     }
 
     private void ConfigurePreviewArt()
@@ -149,47 +180,100 @@ internal sealed partial class MainForm
 
     private static readonly HttpClient PreviewClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
+    private sealed record CachedPreview(Bitmap Image, long Used);
+    private readonly Dictionary<string, CachedPreview> previewImages = [];
+    private readonly Dictionary<string, DateTime> failedArtwork = [];
+    private CancellationTokenSource? previewLoad;
+
     private async Task UpdateLargePreviewAsync(string image)
     {
+        if (failedArtwork.TryGetValue(image, out var retryAfter) && retryAfter > DateTime.UtcNow) return;
+        previewLoad?.Cancel();
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        previewLoad = request;
+        var token = request.Token;
         try
         {
-            using var response = await PreviewClient.GetAsync(image, HttpCompletionOption.ResponseHeadersRead, lifetime.Token);
-            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > 4_000_000) return;
-            await using var input = await response.Content.ReadAsStreamAsync(lifetime.Token);
+            using var response = await PreviewClient.GetAsync(image, HttpCompletionOption.ResponseHeadersRead, token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > 4_000_000)
+                throw new HttpRequestException("Artwork is unavailable.");
+            await using var input = await response.Content.ReadAsStreamAsync(token);
             using var buffer = new MemoryStream();
             var block = new byte[16_384];
             int read;
-            while ((read = await input.ReadAsync(block, lifetime.Token)) > 0)
+            while ((read = await input.ReadAsync(block, token)) > 0)
             {
                 if (buffer.Length + read > 4_000_000) return;
                 buffer.Write(block, 0, read);
             }
             buffer.Position = 0;
-            if (IsDisposed || previewImageKey != image) return;
+            if (IsDisposed || token.IsCancellationRequested || previewImageKey != image) return;
             using var decoded = Image.FromStream(buffer);
             if (decoded.Width > 4096 || decoded.Height > 4096) return;
             var previous = previewLarge.Image;
-            previewLarge.Image = new Bitmap(decoded);
+            previewLarge.Image = StorePreview(image + "|" + DeviceDpi, decoded);
+            failedArtwork.Remove(image);
             previewArt.Visible = true;
             SyncHomeArt();
             previous?.Dispose();
         }
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or ArgumentException) { }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or ArgumentException)
+        {
+            if (!token.IsCancellationRequested)
+            {
+                if (failedArtwork.Count >= 16) failedArtwork.Clear();
+                failedArtwork[image] = DateTime.UtcNow.AddMinutes(2);
+            }
+        }
+        finally { if (ReferenceEquals(previewLoad, request)) previewLoad = null; }
     }
 
-    private static Image? LoadPreviewImage(string? image)
+    private Image StorePreview(string key, Image source)
+    {
+        var edge = Math.Min(512, Math.Max(256, 256 * DeviceDpi / 96));
+        var ratio = Math.Min(1d, (double)edge / Math.Max(source.Width, source.Height));
+        var thumbnail = new Bitmap(Math.Max(1, (int)(source.Width * ratio)), Math.Max(1, (int)(source.Height * ratio)));
+        using (var graphics = Graphics.FromImage(thumbnail))
+        {
+            graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(source, new Rectangle(Point.Empty, thumbnail.Size));
+        }
+        if (previewImages.Remove(key, out var replaced)) replaced.Image.Dispose();
+        previewImages[key] = new(thumbnail, Environment.TickCount64);
+        while (previewImages.Count > 8)
+        {
+            var oldest = previewImages.MinBy(entry => entry.Value.Used);
+            previewImages.Remove(oldest.Key);
+            oldest.Value.Image.Dispose();
+        }
+        return new Bitmap(thumbnail);
+    }
+
+    private Image? LoadPreviewImage(string? image)
     {
         if (image is null) return null;
+        var key = image + "|" + DeviceDpi;
+        if (previewImages.TryGetValue(key, out var cached))
+        {
+            previewImages[key] = cached with { Used = Environment.TickCount64 };
+            return new Bitmap(cached.Image);
+        }
         var file = Path.GetFileName(image);
         var resource = DiscordIdentity.CountryArtworkResource(image);
         if (resource is null && file != "hero-truck.png") return null;
         using var input = AppResources.Open(resource ?? file);
         using var picture = Image.FromStream(input);
-        return new Bitmap(picture);
+        return StorePreview(key, picture);
     }
+
+    private PresenceText? displayedOutgoing;
+    private PresenceText? displayedSample;
 
     private void RenderPreview(PresenceText? outgoing, PresenceText? sample)
     {
+        displayedOutgoing = outgoing;
+        displayedSample = sample;
+        if (!homePage.Visible && !tripShellPage.Visible && quickWindow?.Visible != true) return;
         var shown = outgoing ?? (demo || demoScenario is not null ? sample : null);
         var elapsed = shown?.Started is { } start ? DateTime.UtcNow - start : TimeSpan.Zero;
         var age = shown?.Started is null ? null : $"{Math.Max(0, (int)elapsed.TotalHours):00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
@@ -197,6 +281,7 @@ internal sealed partial class MainForm
             : string.Join(" · ", new[] { shown.Image is null ? null : L("Imagen del juego activa", "Game artwork active"), age }.OfType<string>());
         if (previewImageKey != shown?.Image)
         {
+            previewLoad?.Cancel();
             previewImageKey = shown?.Image;
             var previous = previewLarge.Image;
             previewLarge.Image = LoadPreviewImage(previewImageKey);

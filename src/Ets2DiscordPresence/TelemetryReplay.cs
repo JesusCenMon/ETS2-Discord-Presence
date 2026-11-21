@@ -17,27 +17,30 @@ internal static class TelemetryReplay
 
     public static List<RecordedFrame> Read(string path) => ReadDetailed(path).Frames;
 
-    public static RecordingRead ReadDetailed(string path)
+    public static RecordingRead ReadDetailed(string path, CancellationToken cancellationToken = default, IProgress<int>? progress = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var file = File.OpenRead(path);
-        return ReadFile(file, path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase));
+        return ReadFile(file, path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase), cancellationToken, progress);
     }
 
-    internal static RecordingRead ReadFile(Stream file, bool compressed)
+    internal static RecordingRead ReadFile(Stream file, bool compressed, CancellationToken cancellationToken = default, IProgress<int>? progress = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (file.Length is 0 or > MaximumBytes) throw new InvalidDataException("Recording exceeds the allowed size.");
-        if (!compressed) return Parse(file);
+        if (!compressed) return Parse(file, cancellationToken, progress);
         using var gzip = new GZipStream(file, CompressionMode.Decompress, leaveOpen: true);
         using var content = new MemoryStream();
         var buffer = new byte[8192];
         int count;
         while ((count = gzip.Read(buffer)) != 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (content.Length + count > MaximumBytes) throw new InvalidDataException("Recording exceeds the allowed size.");
             content.Write(buffer, 0, count);
         }
         if (content.Length == 0) throw new InvalidDataException("The recording is empty.");
-        return Parse(content);
+        return Parse(content, cancellationToken, progress);
     }
 
     public static RecordingMetadata? ReadHeader(string path)
@@ -56,7 +59,7 @@ internal static class TelemetryReplay
             ? parsed.RootElement.Deserialize<RecordingMetadata>() : null;
     }
 
-    private static RecordingRead Parse(Stream file)
+    private static RecordingRead Parse(Stream file, CancellationToken cancellationToken, IProgress<int>? progress)
     {
         file.Seek(-1, SeekOrigin.End);
         var incompleteTail = file.ReadByte() != '\n';
@@ -65,8 +68,15 @@ internal static class TelemetryReplay
         var frames = new List<RecordedFrame>();
         RecordingMetadata? metadata = null;
         var recoveredTail = false;
+        var reported = -1;
         while (input.ReadLine() is { } line)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (progress is not null && frames.Count % 128 == 0)
+            {
+                var percent = (int)Math.Min(99, file.Position * 100 / file.Length);
+                if (percent != reported) { reported = percent; progress.Report(percent); }
+            }
             if (string.IsNullOrWhiteSpace(line)) continue;
             RecordedFrame frame;
             try
@@ -96,6 +106,7 @@ internal static class TelemetryReplay
             frames.Add(frame);
         }
         if (frames.Count == 0) throw new InvalidDataException("The recording is empty.");
+        progress?.Report(100);
         return new RecordingRead(frames, recoveredTail, metadata);
     }
 

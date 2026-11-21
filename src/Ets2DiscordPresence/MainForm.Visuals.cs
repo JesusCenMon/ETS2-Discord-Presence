@@ -28,31 +28,59 @@ internal sealed partial class MainForm
         using var tint = new System.Drawing.Imaging.ImageAttributes();
         tint.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix
         {
-            Matrix00 = 0, Matrix11 = 0, Matrix22 = 0,
-            Matrix40 = ink.R / 255f, Matrix41 = ink.G / 255f, Matrix42 = ink.B / 255f
+            Matrix00 = 0,
+            Matrix11 = 0,
+            Matrix22 = 0,
+            Matrix40 = ink.R / 255f,
+            Matrix41 = ink.G / 255f,
+            Matrix42 = ink.B / 255f
         });
         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
         g.DrawImage(icon, bounds, 0, 0, icon.Width, icon.Height, GraphicsUnit.Pixel, tint);
     }
 
-    private Control EmptyState(string iconName, string name)
+    private Control EmptyState(string iconName, string name) => new EmptySurface(iconName)
     {
-        var panel = new Panel { BackColor = shellPalette.Surface, TabStop = false, AccessibleName = name };
-        var icon = LoadFluent(iconName);
-        panel.Paint += (_, e) =>
+        BackColor = shellPalette.Surface,
+        ForeColor = shellPalette.Text,
+        TabStop = false,
+        AccessibleName = name,
+        AccessibleRole = AccessibleRole.Pane
+    };
+
+    private sealed class EmptySurface : Panel
+    {
+        private readonly Bitmap icon;
+        internal EmptySurface(string iconName) { icon = LoadFluent(iconName); DoubleBuffered = true; }
+        protected override void OnPaint(PaintEventArgs e)
         {
-            var size = Math.Min(42, Math.Min(panel.Width, panel.Height));
-            if (size > 0)
-                DrawIcon(e.Graphics, icon, new Rectangle((panel.Width - size) / 2, (panel.Height - size) / 2, size, size), shellPalette.Muted);
-        };
-        panel.Disposed += (_, _) => icon.Dispose();
-        return panel;
+            base.OnPaint(e);
+            var size = Math.Min(36 * DeviceDpi / 96, Math.Min(Width, Height));
+            var top = Math.Max(8, (Height - 132 * DeviceDpi / 96) / 2);
+            if (size <= 0) return;
+            DrawIcon(e.Graphics, icon, new Rectangle((Width - size) / 2, top, size, size), ForeColor);
+            var width = Math.Max(1, Width - 48);
+            var title = new Rectangle(24, top + size + 12, width, Font.Height * 2 + 8);
+            TextRenderer.DrawText(e.Graphics, AccessibleName, Font, title, ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            var detail = new Rectangle(24, title.Bottom, width, Math.Max(1, Height - title.Bottom - 16));
+            TextRenderer.DrawText(e.Graphics, AccessibleDescription, Font, detail, ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) icon.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     private FlowLayoutPanel DialogFooter() => new()
     {
-        Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft,
-        Padding = new Padding(16, 8, 16, 8), BackColor = shellPalette.Surface
+        Dock = DockStyle.Bottom,
+        AutoSize = true,
+        FlowDirection = FlowDirection.RightToLeft,
+        Padding = new Padding(16, 8, 16, 8),
+        BackColor = shellPalette.Surface
     };
 
     private void StyleDialogSurface(Control control)
@@ -92,6 +120,7 @@ internal sealed partial class MainForm
         if (button is FocusButton styled)
         {
             styled.Palette = shellPalette;
+            styled.Animation = () => Motion;
             styled.Invalidate();
         }
         var primary = Equals(button.Tag, "primary");
@@ -134,8 +163,21 @@ internal sealed partial class MainForm
     private sealed class FocusButton : Button
     {
         internal ShellPalette? Palette;
-        private bool hovered;
+        internal Func<UiMotion>? Animation;
+        private readonly object hoverMotion = new();
+        private double hoverAmount;
         private bool pressed;
+
+        private void AnimateHover(double target)
+        {
+            var start = hoverAmount;
+            if (Animation is null) { hoverAmount = target; Invalidate(); return; }
+            Animation().Run(hoverMotion, this, UiMotion.Fast, progress =>
+            {
+                hoverAmount = start + (target - start) * progress;
+                Invalidate();
+            });
+        }
 
         public override Size GetPreferredSize(Size proposedSize)
         {
@@ -147,11 +189,19 @@ internal sealed partial class MainForm
             return new Size(Math.Max(preferred.Width, text.Width + Padding.Horizontal + iconWidth + 4), preferred.Height);
         }
 
-        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hovered = true; Invalidate(); }
-        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hovered = false; Invalidate(); }
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); AnimateHover(1); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); AnimateHover(0); }
         protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); pressed = e.Button == MouseButtons.Left; Invalidate(); }
         protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); pressed = false; Invalidate(); }
         protected override void OnMouseCaptureChanged(EventArgs e) { base.OnMouseCaptureChanged(e); pressed = false; Invalidate(); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space) { pressed = true; Invalidate(); }
+            base.OnKeyDown(e);
+        }
+        protected override void OnKeyUp(KeyEventArgs e) { pressed = false; Invalidate(); base.OnKeyUp(e); }
+        protected override void OnLostFocus(EventArgs e) { pressed = false; Invalidate(); base.OnLostFocus(e); }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -169,8 +219,8 @@ internal sealed partial class MainForm
             var quiet = Equals(Tag, "quiet");
             var ink = Enabled ? ForeColor : palette.Muted;
             var resting = quiet ? parentColor : BackColor;
-            var color = Enabled && (hovered || pressed)
-                ? UiMotion.Blend(resting, ink, pressed ? .18 : .09)
+            var color = Enabled && (hoverAmount > 0 || pressed)
+                ? UiMotion.Blend(resting, ink, pressed ? .18 : .09 * hoverAmount)
                 : Enabled ? resting : UiMotion.Blend(resting, parentColor, .55);
             using var outline = Rounded(new Rectangle(1, 1, Width - 3, Height - 3), Math.Max(6, 8 * DeviceDpi / 96));
             using var fill = new SolidBrush(color);

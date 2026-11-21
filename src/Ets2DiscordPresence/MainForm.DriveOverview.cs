@@ -3,7 +3,6 @@ namespace Ets2DiscordPresence;
 internal sealed partial class MainForm
 {
     private TripStrip? currentTripBar;
-    private TripStrip? settingsTripBar;
     private TelemetrySnapshot? displayedDrive;
     private bool driveConnected;
     private bool driveSharing;
@@ -23,6 +22,7 @@ internal sealed partial class MainForm
         {
             var tile = Grid(1);
             tile.Dock = DockStyle.None;
+            tile.MinimumSize = new Size(124, 72);
             tile.Padding = new Padding(12, 4, 12, 4);
             tile.Margin = new Padding(0, 4, 8, 4);
             var label = TextLabel("", 14, true);
@@ -49,11 +49,14 @@ internal sealed partial class MainForm
     private void UpdateDriveOverview(TelemetrySnapshot? trip, string? remaining)
     {
         if (overviewRoute is null || overviewDetail is null) return;
-        overviewRoute.Text = trip is null ? gameRunning ? L("Esperando una partida", "Waiting for a session")
-            : L("ETS2 está cerrado", "ETS2 is closed") : DriveTitle(trip);
-        overviewDetail.Text = trip is null ? L("Entra a una partida para ver tu recorrido.", "Enter a session to see your drive.")
-            : trip.Paused ? L("En pausa", "Paused") : trip.Cargo;
-        overviewDetail.Visible = overviewDetail.Text.Length > 0;
+        if (homePage.Visible)
+        {
+            overviewRoute.Text = trip is null ? gameRunning ? L("Esperando una partida", "Waiting for a session")
+                : L("ETS2 está cerrado", "ETS2 is closed") : DriveTitle(trip);
+            overviewDetail.Text = trip is null ? L("Entra a una partida para ver tu recorrido.", "Enter a session to see your drive.")
+                : trip.Paused ? L("En pausa", "Paused") : trip.Cargo;
+            overviewDetail.Visible = overviewDetail.Text.Length > 0;
+        }
         string?[] values =
         [
             remaining,
@@ -61,13 +64,17 @@ internal sealed partial class MainForm
             trip?.Signals is { Speed: var speed } && float.IsFinite(speed) ? SpeedLabel(Math.Abs(speed) * 3.6) : null,
             trip?.Truck?.FuelPercent is { } fuel ? $"{fuel:N0} %" : null
         ];
-        for (var index = 0; index < values.Length; index++)
+        if (homePage.Visible)
         {
-            var label = overviewValues[index];
-            label.Text = values[index] ?? "";
-            label.Parent!.Visible = values[index] is not null;
+            for (var index = 0; index < values.Length; index++)
+            {
+                var label = overviewValues[index];
+                label.Text = values[index] ?? "";
+                label.Parent!.Visible = values[index] is not null;
+            }
+            overviewMetrics!.Visible = values.Any(value => value is not null);
         }
-        overviewMetrics!.Visible = values.Any(value => value is not null);
+        if (!tripShellPage.Visible) return;
         void Display(Label label, string? value)
         {
             label.Text = value ?? "";
@@ -95,10 +102,10 @@ internal sealed partial class MainForm
         driveConnected = connected;
         driveSharing = sharing;
         var remaining = trip?.RemainingKm is { } km ? AppOptions.Distance(km, preferences.Features.Miles) : null;
-        UpdateDriveOverview(trip, remaining);
+        if (homePage.Visible || tripShellPage.Visible) UpdateDriveOverview(trip, remaining);
         var discord = !connected ? L("○ Discord desconectado", "○ Discord offline")
             : sharing ? L("● Discord activo", "● Discord active") : L("Ⅱ Discord en pausa", "Ⅱ Discord paused");
-        foreach (var strip in new[] { currentTripBar, settingsTripBar })
+        foreach (var strip in new[] { currentTripBar })
         {
             if (strip is null || strip.IsDisposed) continue;
             strip.Visible = trip is not null;

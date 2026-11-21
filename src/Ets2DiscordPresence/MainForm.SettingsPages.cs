@@ -8,7 +8,8 @@ internal sealed partial class MainForm
         private readonly Panel host = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
         private readonly Dictionary<Panel, NavigationButton> links = [];
         private Panel? selected;
-        private Action<Control>? transition;
+        private readonly HashSet<Panel> prepared = [];
+        internal Action<Control>? PreparePage;
         public List<Panel> Pages { get; } = [];
         public int ContentWidth => host.ClientSize.Width;
         public event EventHandler? SelectedIndexChanged;
@@ -31,8 +32,8 @@ internal sealed partial class MainForm
         {
             Pages.Add(page);
             page.Visible = false;
-            host.Controls.Add(page);
-            if (selected is null) SelectedTab = page;
+            // Unvisited sections stay detached, so Windows does not create their native controls.
+            page.SuspendLayout();
         }
 
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -42,22 +43,40 @@ internal sealed partial class MainForm
             set
             {
                 if (value is null || value == selected) return;
-                transition?.Invoke(host);
+                using var redraw = new UiRedrawScope(host);
+                using var layout = new UiLayoutBatch(value);
                 host.SuspendLayout();
                 var previous = selected;
                 selected = value;
+                if (prepared.Add(value))
+                {
+                    value.Size = host.ClientSize;
+                    PreparePage?.Invoke(value);
+                    foreach (Control content in value.Controls) content.ResumeLayout(true);
+                    value.ResumeLayout(true);
+                }
+                if (value.Parent != host) host.Controls.Add(value);
                 value.BringToFront();
                 value.Show();
                 previous?.Hide();
+                layout.Dispose();
+                value.PerformLayout();
                 host.ResumeLayout(true);
                 foreach (var (page, link) in links) link.SetSelected(page == value);
                 SelectedIndexChanged?.Invoke(this, EventArgs.Empty);
             }
         }
 
-        public void BuildNavigation(ShellPalette palette, Func<UiMotion> motion, Action<Control> transition)
+        protected override void Dispose(bool disposing)
         {
-            this.transition = transition;
+            if (disposing)
+                foreach (var page in Pages.Where(page => page.Parent is null)) page.Dispose();
+            base.Dispose(disposing);
+        }
+
+        public void BuildNavigation(ShellPalette palette, Func<UiMotion> motion)
+        {
+            if (selected is null && Pages.Count > 0) SelectedTab = Pages[0];
             string[] icons = ["desktop", "eye", "vehicle_truck", "weather_sunny", "book_open", "options", "play_circle"];
             rail.BackColor = palette.Surface;
             var menu = Grid(1);
@@ -69,7 +88,12 @@ internal sealed partial class MainForm
                 var page = Pages[index];
                 var link = new NavigationButton(icons[index % icons.Length])
                 {
-                    Text = page.Text, AccessibleName = page.Text, Palette = palette, Dock = DockStyle.Top, SelectionMotion = motion
+                    Text = page.Text,
+                    AccessibleName = page.Text,
+                    Palette = palette,
+                    Width = 1,
+                    Dock = DockStyle.Top,
+                    SelectionMotion = motion
                 };
                 tips.SetToolTip(link, page.Text);
                 link.Click += (_, _) => SelectedTab = page;
@@ -84,6 +108,7 @@ internal sealed partial class MainForm
                 var iconsOnly = Width / scale < 660;
                 var width = (iconsOnly ? 56 : 192 + Math.Max(0, (links.Values.FirstOrDefault()?.Font.SizeInPoints ?? 10.5f) - 10.5f) * 7) * scale;
                 if (Math.Abs(ColumnStyles[0].Width - width) > .5f) ColumnStyles[0].Width = width;
+                menu.MaximumSize = new Size(Math.Max(24, (int)width - (rail.VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0)), 0);
                 foreach (var link in links.Values)
                 {
                     link.IconsOnly = iconsOnly;

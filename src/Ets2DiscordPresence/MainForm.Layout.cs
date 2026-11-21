@@ -173,8 +173,14 @@ internal sealed partial class MainForm
             Translate(summaryButton, "Ver resumen", "View summary")]);
         var menu = new ContextMenuStrip();
         var more = new ToolStripDropDownButton { DropDown = menu };
-        var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Dock = DockStyle.None,
-            Margin = new Padding(0, 4, 8, 4), Padding = new Padding(4), TabStop = true };
+        var tools = new ToolStrip
+        {
+            GripStyle = ToolStripGripStyle.Hidden,
+            Dock = DockStyle.None,
+            Margin = new Padding(0, 4, 8, 4),
+            Padding = new Padding(4),
+            TabStop = true
+        };
         tools.Items.Add(more);
         var obs = menu.Items.Add("OBS", null, (_, _) => ShowCaptureCard());
         var privacy = menu.Items.Add("", null, (_, _) => ShowPrivacyMenu(tools));
@@ -244,12 +250,43 @@ internal sealed partial class MainForm
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         side.Controls.Add(artwork, 0, 2);
         body.Controls.Add(side, 1, 0);
-        scroll.ClientSizeChanged += (_, _) => ArrangeLayout();
+        scroll.ClientSizeChanged += (_, _) => ScheduleLayout();
         ApplyShellTheme();
         ArrangeLayout();
     }
 
+    private readonly System.Windows.Forms.Timer layoutDelay = new() { Interval = 35 };
+    private bool arrangingLayout;
+    private bool layoutTimerReady;
+
+    private void ScheduleLayout()
+    {
+        if (!IsHandleCreated || !Visible || arrangingLayout) return;
+        if (!layoutTimerReady)
+        {
+            layoutTimerReady = true;
+            layoutDelay.Tick += (_, _) => { layoutDelay.Stop(); ArrangeLayout(); };
+        }
+        layoutDelay.Stop();
+        layoutDelay.Start();
+    }
+
     private void ArrangeLayout()
+    {
+        if (arrangingLayout) return;
+        arrangingLayout = true;
+        using var redraw = new UiRedrawScope(scroll);
+        using var layout = new UiLayoutBatch(body);
+        try { ArrangeLayoutCore(); }
+        finally
+        {
+            layout.Dispose();
+            body.PerformLayout();
+            arrangingLayout = false;
+        }
+    }
+
+    private void ArrangeLayoutCore()
     {
         ResizeShell();
         if (body.Controls.Count < 2) return;
@@ -418,11 +455,14 @@ internal sealed partial class MainForm
         label.ForeColor = active ? shellPalette.Accent : shellPalette.Muted;
     }
 
-    private static TableLayoutPanel Grid(int columns) => new()
+    private static TableLayoutPanel Grid(int columns) => UiLayoutBatch.Created(new TableLayoutPanel
     {
-        Dock = DockStyle.Top, ColumnCount = columns, AutoSize = true,
-        AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty
-    };
+        Dock = DockStyle.Top,
+        ColumnCount = columns,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Margin = Padding.Empty
+    });
 
     private static void AddRows(TableLayoutPanel grid, params Control[] rows)
     {
@@ -436,8 +476,12 @@ internal sealed partial class MainForm
 
     private static Label TextLabel(string text, int size, bool bold = false) => new()
     {
-        Text = text, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 4),
-        AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, ForeColor = bold ? Foreground : Foreground,
+        Text = text,
+        Dock = DockStyle.Fill,
+        Margin = new Padding(0, 4, 0, 4),
+        AutoSize = true,
+        TextAlign = ContentAlignment.MiddleLeft,
+        ForeColor = bold ? Foreground : Foreground,
         Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular)
     };
 
@@ -448,6 +492,9 @@ internal sealed partial class MainForm
         var font = new Font("Consolas", size, FontStyle.Bold);
         label.Font = font;
         original.Dispose();
+        void ReserveDigits() => label.MinimumSize = new Size(TextRenderer.MeasureText("00000", label.Font).Width, 0);
+        label.FontChanged += (_, _) => ReserveDigits();
+        ReserveDigits();
         label.Disposed += (_, _) => font.Dispose();
         return label;
     }
@@ -456,12 +503,15 @@ internal sealed partial class MainForm
     {
         var button = new FocusButton
         {
-            Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Padding = new Padding(8, 4, 8, 4), Margin = new Padding(0, 4, 8, 4),
+            Text = text,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(8, 4, 8, 4),
+            Margin = new Padding(0, 4, 8, 4),
             FlatStyle = FlatStyle.Flat
         };
         button.FlatAppearance.BorderSize = 1;
-        button.MinimumSize = new Size(36, 32);
+        button.MinimumSize = new Size(40, 36);
         if (isLight) button.FlatAppearance.BorderColor = SystemColors.ControlDark;
         button.Enter += (_, _) => { button.FlatAppearance.BorderColor = SystemColors.HotTrack; };
         button.Leave += (_, _) => { button.FlatAppearance.BorderColor = isLight ? SystemColors.ControlDark : SystemColors.ControlDarkDark; };

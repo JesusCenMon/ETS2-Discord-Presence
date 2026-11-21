@@ -71,7 +71,7 @@ La actividad aparece como **Euro Truck Simulator 2** en Discord. La actividad us
 
 ## Novedades
 
-La v0.8.6 incorpora una barra de viaje persistente, Inicio centrado en la ruta y métricas disponibles, acento configurable y mejoras en Diario, Repeticiones y Ajustes. Consulta el [historial completo](CHANGELOG.es.md).
+La v0.8.8 corrige pausas adicionales al cargar pestañas y agiliza la navegación, conserva las páginas de Diario y Repeticiones e integra Ajustes en la ventana principal. Añade lectura de grabaciones en segundo plano, mejoras de texto ampliado y menos trabajo de dibujo en mapas y gráficos. Consulta el [historial completo](CHANGELOG.es.md).
 
 ## Desarrollo
 

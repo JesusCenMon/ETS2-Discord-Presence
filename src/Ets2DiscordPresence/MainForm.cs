@@ -117,9 +117,16 @@ internal sealed partial class MainForm : Form
         Resize += (_, _) =>
         {
             if (WindowState == FormWindowState.Minimized && Visible) Hide();
-            ArrangeLayout();
+            ScheduleLayout();
         };
-        DpiChanged += (_, _) => { ResizeShell(); ArrangeLayout(); };
+        ResizeEnd += (_, _) => { layoutDelay.Stop(); ArrangeLayout(); };
+        DpiChanged += (_, _) =>
+        {
+            using var redraw = new UiRedrawScope(appShell);
+            appShell.SuspendLayout();
+            try { ResizeShell(); ScaleText(this); ArrangeLayout(); }
+            finally { appShell.ResumeLayout(true); }
+        };
         timer.Tick += (_, _) => RefreshPresence();
         presenceTimer.Tick += (_, _) =>
         {
@@ -144,8 +151,12 @@ internal sealed partial class MainForm : Form
         {
             SaveLandingPage();
             landingSave?.Dispose();
+            ClearLibraryPages();
             motion?.Dispose();
             lifetime.Cancel();
+            layoutDelay.Dispose();
+            previewLoad?.Cancel();
+            foreach (var cached in previewImages.Values) cached.Image.Dispose();
             timer.Dispose();
             presenceTimer.Dispose();
             photoWatcher?.Dispose();
@@ -431,12 +442,26 @@ internal sealed partial class MainForm : Form
         var trip = demoScenario switch
         {
             "pause" => Sample with { Paused = true },
-            "roam" => Sample with { OnJob = false, Cargo = "", SourceCity = "", DestinationCity = "",
-                X = -65398, Z = 48701, RouteDistanceMeters = 0 },
+            "roam" => Sample with
+            {
+                OnJob = false,
+                Cargo = "",
+                SourceCity = "",
+                DestinationCity = "",
+                X = -65398,
+                Z = 48701,
+                RouteDistanceMeters = 0
+            },
             "offline" => null,
             "job" => Sample,
-            "coach" => Sample with { Coach = true, Cargo = "", SourceCity = "Lyon", DestinationCity = "París",
-                Truck = new TruckInfo("Volvo", "9700 DD", 350, 600) },
+            "coach" => Sample with
+            {
+                Coach = true,
+                Cargo = "",
+                SourceCity = "Lyon",
+                DestinationCity = "París",
+                Truck = new TruckInfo("Volvo", "9700 DD", 350, 600)
+            },
             _ => demo ? Sample : telemetry
         };
         var isExample = demo || demoScenario is not null;
@@ -461,13 +486,15 @@ internal sealed partial class MainForm : Form
                 Image = preferences.ActivityImage && preferences.Features.DiscordMode != "private"
                     ? DiscordIdentity.ImageFor(presenceSettings.SharesCountry ? country : null, releaseArtwork, discordEnglish, coachArtwork) : null
             };
+        if (currentPage is "journal" or "replay" && libraryPages.Count == 1)
+            libraryPages.Peek().Activated?.Invoke();
         RenderDriveOverview(trip, ready, sharing && !simulated);
-        RenderTrip(trip, displayedCity, presence);
-        if (!simulated && gameScreen is { } displayedScreen)
-            travelMode.Text = PresenceFormatter.ScreenTitle(displayedScreen, coachArtwork, English);
-        RenderExtras(trip, now, running, ready);
+        pendingTripView = new(trip, displayedCity, presence, now, running, ready,
+            !simulated && gameScreen is { } displayedScreen ? PresenceFormatter.ScreenTitle(displayedScreen, coachArtwork, English) : null);
+        RefreshTripView();
         RenderTools(trip, telemetry, ready, sharing && !simulated);
-        RenderDashboard(trip, running, ready, now);
+        timer.Interval = preferences.Features.LowPower && !Visible && trip?.OnJob != true
+            && recording is null && !preferences.Features.AutoRecord ? 6000 : 2000;
         var boundary = !isExample && journal.BoundaryCountry is { } crossed ? $"border:{crossed}" : null;
         tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, tripMap.Visible, boundary);
         guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
@@ -577,10 +604,12 @@ internal sealed partial class MainForm : Form
         if (presence is null) discord.ClearPresence();
         else discord.SetPresence(new RichPresence
         {
-            Details = presence.Details, State = presence.State,
+            Details = presence.Details,
+            State = presence.State,
             Assets = presence.Image is { } image ? new Assets
             {
-                LargeImageKey = image, LargeImageText = DiscordIdentity.ActivityName
+                LargeImageKey = image,
+                LargeImageText = DiscordIdentity.ActivityName
             } : null,
             Timestamps = presence.Started is { } start ? new Timestamps { Start = start } : null
         });
@@ -675,7 +704,8 @@ internal sealed partial class MainForm : Form
         RestoreWindow();
         using var window = new Form
         {
-            Text = "Licencias", Size = new Size(680, 500),
+            Text = "Licencias",
+            Size = new Size(680, 500),
             StartPosition = FormStartPosition.CenterParent
         };
         using var telemetry = new StreamReader(AppResources.Open("RENCLOUD-LICENSE.txt"));
@@ -684,7 +714,10 @@ internal sealed partial class MainForm : Form
         using var fluent = new StreamReader(AppResources.Open("FLUENT-LICENSE.txt"));
         window.Controls.Add(new TextBox
         {
-            Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
             Text = "RenCloud SCS SDK Plugin\r\n\r\n" + telemetry.ReadToEnd()
                 + "\r\n\r\nSCS SDK\r\n\r\n" + sdk.ReadToEnd()
                 + "\r\n\r\nETS2 City Coordinate Retriever\r\n\r\n" + cityData.ReadToEnd()

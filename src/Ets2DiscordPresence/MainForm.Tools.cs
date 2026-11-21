@@ -90,13 +90,17 @@ internal sealed partial class MainForm
         };
     }
 
-    private static FlowLayoutPanel ToolBar() => new()
+    private static FlowLayoutPanel ToolBar() => UiLayoutBatch.Created(new FlowLayoutPanel
     {
-        Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Margin = Padding.Empty
-    };
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        WrapContents = true,
+        Margin = Padding.Empty
+    });
 
     private void StyleTool(Control window)
     {
+        using var layout = new UiLayoutBatch(window);
         Restyle(window);
         StyleDialogSurface(window);
         ScaleText(window);
@@ -313,8 +317,13 @@ internal sealed partial class MainForm
         quickWindow = window;
         var label = TextLabel("", 12, true);
         quickText = label;
-        var cover = new PictureBox { Size = new Size(64, 64), SizeMode = PictureBoxSizeMode.Zoom, TabStop = false,
-            AccessibleName = L("Portada de Discord", "Discord artwork") };
+        var cover = new PictureBox
+        {
+            Size = new Size(64, 64),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            TabStop = false,
+            AccessibleName = L("Portada de Discord", "Discord artwork")
+        };
         quickArtwork = cover;
         label.MaximumSize = new Size(270, 0);
         ObserveText(label, () => shellPalette.Accent);

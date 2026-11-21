@@ -21,6 +21,7 @@ internal sealed partial class MainForm
     private T Translate<T>(T control, string es, string en) where T : Control
     {
         translations[control] = (es, en);
+        control.Disposed += (_, _) => translations.Remove(control);
         control.Text = L(es, en);
         return control;
     }
@@ -82,8 +83,10 @@ internal sealed partial class MainForm
 
     private string FieldName(string key) => key switch
     {
-        "cargo" => L("Carga", "Cargo"), "route" => L("Ruta", "Route"),
-        "city" => L("Ciudad", "City"), _ => L("Distancia", "Distance")
+        "cargo" => L("Carga", "Cargo"),
+        "route" => L("Ruta", "Route"),
+        "city" => L("Ciudad", "City"),
+        _ => L("Distancia", "Distance")
     };
 
     private static string[] OrderPanels(AppSettings settings, string[] keys) =>

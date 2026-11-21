@@ -2,7 +2,28 @@
 
 [English changelog](../CHANGELOG.md) · [Volver a la guía](README.es.md)
 
-## Última versión · v0.8.6
+## Última versión · v0.8.8
+
+- Corrige las pausas restantes al abrir Ajustes y cambiar de pestaña.
+- Agrupa la distribución y el dibujo de los controles, y prepara los estilos antes de crear sus ventanas nativas.
+- Evita repetir mediciones cuando el ancho no cambia y abre directamente el apartado solicitado.
+- Presenta cada página en una actualización conjunta y conserva las animaciones de la barra lateral y los botones.
+- Corrige cálculos repetidos al ajustar Viaje y restaura el foco al terminar la actualización.
+
+La comprobación con ventana visible midió unos 0,4–0,6 segundos al abrir Ajustes, frente a 3,3 segundos antes. Las pestañas preparadas se dibujaron en unos 16–30 ms. Son resultados de esta máquina y este contenido.
+
+### v0.8.7
+
+- Diario y Repeticiones conservan su pantalla, selección, filtros y desplazamiento.
+- Ajustes se abre en la ventana principal y prepara los controles de cada apartado al visitarlo.
+- Transiciones más ligeras, tabla de viajes con celdas bajo demanda y catálogo de grabaciones reutilizable.
+- Lectura de repeticiones en segundo plano con progreso y cancelación.
+- Mejoras de menús, estados vacíos, foco, botones, miniaturas y tamaños de texto.
+- Menos dibujo en mapas y gráficos y mejor ajuste de ventanas estrechas.
+
+Se comprobaron las funciones principales con 1.800 viajes de demostración, los dos idiomas, temas claro/oscuro, texto al 150% y 120 cambios consecutivos por sesión de prueba. Las vueltas al Diario midieron 24–27 ms en la prueba local final, frente a 342–373 ms antes. Quedan pruebas durante una partida real y entre monitores con escalas distintas.
+
+### v0.8.6
 
 - Inicio prioriza la ruta y las métricas disponibles. La barra de viaje permite abrir el detalle desde cualquier sección.
 - La interfaz usa tonos grafito, un acento configurable y controles unificados para navegación, ajustes y grabaciones.

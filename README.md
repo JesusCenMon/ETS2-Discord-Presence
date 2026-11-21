@@ -96,7 +96,21 @@ Automatic map and photo recognition is **experimental**. It reads visible screen
 
 Nearby cities and countries are **estimates** from the included catalog. Unsupported maps, sparse coverage and borders can affect the result. You can import a custom city catalog in Game settings.
 
-## Latest release · v0.8.6
+## Latest release · v0.8.8
+
+- Tab switches batch control layout and drawing, including the first preparation of Settings sections.
+- Settings opens the requested section directly and avoids repeated measurement of unchanged widths.
+- Page movement is replaced by an atomic content update, while sidebar and control feedback remain animated.
+- Trip layout changes are applied together, and navigation reuses the last rendered trip when its data and settings match.
+
+### v0.8.7
+
+- Retained Journal, Replays and inline Settings pages preserve navigation state.
+- Lightweight page transitions, deferred settings sections and background cancellable replay loading.
+- Virtual journal rows, cached recording metadata, bounded artwork thumbnails and reduced map/chart drawing.
+- Improved focus, narrow layouts, large text, action hierarchy and explicit loading/empty states.
+
+### v0.8.6
 
 - Route-focused Home and Trip pages with available journey metrics.
 - A Current Trip bar that stays visible in Journal, Replays and Settings.

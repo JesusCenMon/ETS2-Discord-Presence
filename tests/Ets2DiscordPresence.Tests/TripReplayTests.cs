@@ -4,6 +4,30 @@ namespace Ets2DiscordPresence.Tests;
 
 public sealed class TripReplayTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReplayReadHonorsCancellationBeforeReading(bool compressed)
+    {
+        using var file = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"ElapsedMs\":0,\"Trip\":null}\n"));
+        Assert.Throws<OperationCanceledException>(() => TelemetryReplay.ReadFile(file, compressed, new CancellationToken(true)));
+    }
+
+    [Fact]
+    public void ReplayReadCanBeCancelledDuringParsing()
+    {
+        var frames = Enumerable.Range(0, 1000).Select(index => $"{'{'}\"ElapsedMs\":{index},\"Trip\":null{'}'}");
+        using var file = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", frames) + "\n"));
+        using var cancellation = new CancellationTokenSource();
+        var progress = new CancelOnProgress(cancellation);
+        Assert.Throws<OperationCanceledException>(() => TelemetryReplay.ReadFile(file, false, cancellation.Token, progress));
+    }
+
+    private sealed class CancelOnProgress(CancellationTokenSource cancellation) : IProgress<int>
+    {
+        public void Report(int value) => cancellation.Cancel();
+    }
+
     [Fact]
     public void ReplaysSessionWithRestartAndCompletionWithoutDuplicatingTrips()
     {

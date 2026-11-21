@@ -7,6 +7,7 @@ internal sealed class UiMotion(Func<bool> enabled) : IDisposable
     internal const int Slow = 320;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 16 };
     private readonly Dictionary<object, Transition> transitions = new();
+    private readonly List<KeyValuePair<object, Transition>> frame = [];
     private sealed record Transition(long Started, int Duration, Action<double> Update, Func<bool> Visible);
 
     public void Run(object key, Control owner, int duration, Action<double> update)
@@ -36,7 +37,9 @@ internal sealed class UiMotion(Func<bool> enabled) : IDisposable
     {
         var now = Environment.TickCount64;
         var animate = enabled();
-        foreach (var (key, transition) in transitions.ToArray())
+        frame.Clear();
+        frame.AddRange(transitions);
+        foreach (var (key, transition) in frame)
         {
             if (!transitions.TryGetValue(key, out var current) || current != transition) continue;
             var fraction = animate && transition.Visible() ? Math.Clamp((double)(now - transition.Started) / transition.Duration, 0, 1) : 1;
