@@ -24,6 +24,7 @@ internal sealed partial class MainForm : Form
     private readonly NotifyIcon tray;
     private readonly ContextMenuStrip trayMenu = new();
     private readonly bool startMinimized;
+    private FormWindowState restoredWindowState = FormWindowState.Normal;
     private readonly ToolStripMenuItem trayPause = new();
     private AppSettings preferences = AppSettings.Load();
     private readonly string initialTheme;
@@ -117,7 +118,14 @@ internal sealed partial class MainForm : Form
         Resize += (_, _) =>
         {
             if (WindowState == FormWindowState.Minimized && Visible) Hide();
+            else if (WindowState != FormWindowState.Minimized) restoredWindowState = WindowState;
             ScheduleLayout();
+        };
+        VisibleChanged += (_, _) =>
+        {
+            if (Disposing || IsDisposed) return;
+            if (!Visible) { idleWarmup.Stop(); previewLoad?.Cancel(); }
+            else if (warmRecordings is null) idleWarmup.Start();
         };
         ResizeEnd += (_, _) => { layoutDelay.Stop(); ArrangeLayout(); };
         DpiChanged += (_, _) =>
@@ -146,12 +154,21 @@ internal sealed partial class MainForm : Form
         Restyle(this);
         ScaleText(this);
         RememberWindow(this, "main");
-        Shown += (_, _) => Start();
+        interactionFilter = new InteractionFilter(this);
+        Application.AddMessageFilter(interactionFilter);
+        Shown += (_, _) => { StartQualityMonitor(); Start(); };
+        FormClosing += (_, args) =>
+        {
+            if (args.CloseReason is not (CloseReason.WindowsShutDown or CloseReason.TaskManagerClosing)
+                && GuardSettingsNavigation(Close)) args.Cancel = true;
+        };
         FormClosed += (_, _) =>
         {
             SaveLandingPage();
             landingSave?.Dispose();
             ClearLibraryPages();
+            StopQualityMonitor();
+            if (interactionFilter is not null) Application.RemoveMessageFilter(interactionFilter);
             motion?.Dispose();
             lifetime.Cancel();
             layoutDelay.Dispose();
@@ -199,6 +216,7 @@ internal sealed partial class MainForm : Form
             var sent = lastSent;
             discordConfirmed = discordReady && sent is not null && message.Presence is { } ack
                 && ack.Details == sent.Details && ack.State == sent.State;
+            if (discordConfirmed) Interlocked.Exchange(ref lastDiscordAcknowledgement, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         };
         discord.OnClose += (_, _) => { discordReady = false; discordConfirmed = false; };
         discord.OnConnectionFailed += (_, _) => { discordReady = false; discordConfirmed = false; lastDiscordError = "connection_failed"; };
@@ -210,12 +228,20 @@ internal sealed partial class MainForm : Form
         if (!retentionChecked)
         {
             retentionChecked = true;
-            try { LocalData.PruneRecordings(preferences.RetentionDays, recordingPath); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+            var retention = preferences.RetentionDays;
+            var active = recordingPath;
+            _ = Task.Run(() =>
+            {
+                try { LocalData.PruneRecordings(retention, active); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+            });
         }
 
         await RefreshUpdateAsync();
     }
+
+    private DateTimeOffset? updateCheckedAt;
+    private bool updateCheckFailed;
 
     private async Task RefreshUpdateAsync()
     {
@@ -223,11 +249,16 @@ internal sealed partial class MainForm : Form
         {
             var preview = preferences.PreviewUpdates;
             var release = await DesktopServices.CheckForUpdateAsync(preview, lifetime.Token);
-            if (!IsDisposed && preview == preferences.PreviewUpdates) availableUpdate = release;
+            if (!IsDisposed && preview == preferences.PreviewUpdates)
+            {
+                availableUpdate = release;
+                updateCheckedAt = DateTimeOffset.Now;
+                updateCheckFailed = false;
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
         {
-            // An unavailable update check does not affect the trip or Discord.
+            if (!IsDisposed) updateCheckFailed = true;
         }
     }
 
@@ -382,6 +413,8 @@ internal sealed partial class MainForm : Form
 
     private void RefreshPresence()
     {
+        using var measurement = MeasureNavigation("telemetry-refresh");
+        var renderUi = Visible && WindowState != FormWindowState.Minimized && !UiBusy;
         var ready = discordReady && demoScenario != "offline";
         SetStatus(discordStatus, ready ? L("Discord · Conectado", "Discord · Connected") :
             discordWasReady ? L("Discord · Reconectando…", "Discord · Reconnecting…") : L("Discord · Esperando la app de escritorio", "Discord · Waiting for desktop app"), ready);
@@ -422,6 +455,10 @@ internal sealed partial class MainForm : Form
         }
 
         liveSnapshot = telemetry;
+        hasShellStatus = true;
+        shellGameOpen = running;
+        shellDiscordReady = ready;
+        if (renderUi) { UpdateShellLabels(); RenderPresentationStatus(); }
         var gameScreen = DetectGameScreen(running, telemetry, now);
         locate.Visible = canLocateGame && telemetry is null;
         launch.Visible = !running;
@@ -484,17 +521,19 @@ internal sealed partial class MainForm : Form
                 Started = preferences.ActivityTimer && preferences.Features.DiscordMode != "private"
                     ? isExample ? DateTime.UtcNow.AddMinutes(-3) : preferences.Features.SessionTimer ? sessionStarted : activityStarted : null,
                 Image = preferences.ActivityImage && preferences.Features.DiscordMode != "private"
-                    ? DiscordIdentity.ImageFor(presenceSettings.SharesCountry ? country : null, releaseArtwork, discordEnglish, coachArtwork) : null
+                    ? SelectActivityArtwork(DiscordIdentity.ImageFor(presenceSettings.SharesCountry ? country : null, releaseArtwork, discordEnglish, coachArtwork), coachArtwork) : null
             };
-        if (currentPage is "journal" or "replay" && libraryPages.Count == 1)
+        if (renderUi && currentPage is "journal" or "replay" && libraryPages.Count == 1)
             libraryPages.Peek().Activated?.Invoke();
         RenderDriveOverview(trip, ready, sharing && !simulated);
         pendingTripView = new(trip, displayedCity, presence, now, running, ready,
             !simulated && gameScreen is { } displayedScreen ? PresenceFormatter.ScreenTitle(displayedScreen, coachArtwork, English) : null);
         RefreshTripView();
         RenderTools(trip, telemetry, ready, sharing && !simulated);
-        timer.Interval = preferences.Features.LowPower && !Visible && trip?.OnJob != true
-            && recording is null && !preferences.Features.AutoRecord ? 6000 : 2000;
+        timer.Interval = !renderUi && preferences.Features.LowPower && trip?.OnJob != true
+            && recording is null && !preferences.Features.AutoRecord ? 4000 : 2000;
+        uiPulse.Interval = renderUi ? 500 : 4000;
+        TrimPreviewCache(renderUi ? 8_000_000 : 1_500_000);
         var boundary = !isExample && journal.BoundaryCountry is { } crossed ? $"border:{crossed}" : null;
         tripMap.UpdateMap(trip, cities, English, shellPalette.Light, isExample, tripMap.Visible, boundary);
         guidance.Text = settingsError ?? (journal.Error is not null ? L("No se pudo acceder al historial local.", "The local trip history is unavailable.") : null) ?? (replayOpen ? L("Reproducción local. No se publica en Discord.", "Local replay. Discord publishing is paused.")
@@ -599,6 +638,7 @@ internal sealed partial class MainForm : Form
     {
         if (!publication.ShouldSend(presence, Volatile.Read(ref connectionGeneration))) return;
         if (presence is not null) Interlocked.Exchange(ref lastDiscordPublication, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Interlocked.Exchange(ref lastDiscordAcknowledgement, 0);
         lastSent = presence;
         discordConfirmed = false;
         if (presence is null) discord.ClearPresence();
@@ -695,8 +735,9 @@ internal sealed partial class MainForm : Form
     {
         ShowInTaskbar = true;
         Show();
-        WindowState = FormWindowState.Normal;
+        WindowState = restoredWindowState;
         Activate();
+        BeginInvoke(() => { if (!IsDisposed) RefreshPresence(); });
     }
 
     private void ShowLicenses()

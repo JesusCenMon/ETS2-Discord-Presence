@@ -8,7 +8,7 @@ internal sealed partial class MainForm
     private bool navigationQueued;
 
     private string PageContext => string.Join("|", preferences.Language, preferences.TextPercent,
-        preferences.Features.TableTextPercent, preferences.Features.Miles);
+        preferences.Features.TableTextPercent, preferences.Features.Miles, preferences.Theme, preferences.Features.AccentPreset);
 
     private sealed class LibraryPage : Panel
     {
@@ -47,7 +47,13 @@ internal sealed partial class MainForm
 
     private void QueueNavigation(string page)
     {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
         requestedPage = page;
+        if (page != currentPage && !retainedPages.ContainsKey(page) && page is "journal" or "replay" or "settings" or "help")
+        {
+            ShowStatusToast(L("Abriendo sección…", "Opening section…"));
+            statusToast?.Update();
+        }
         foreach (var (key, link) in navigation) link.SetSelected(key == page);
         if (navigationQueued) return;
         navigationQueued = true;

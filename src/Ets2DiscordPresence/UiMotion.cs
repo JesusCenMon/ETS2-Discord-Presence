@@ -2,6 +2,29 @@ namespace Ets2DiscordPresence;
 
 internal sealed class UiMotion(Func<bool> enabled) : IDisposable
 {
+    private static long nextSystemCheck;
+    private static bool systemAnimations = true;
+    internal static bool SystemAnimationsEnabled
+    {
+        get
+        {
+            var now = Environment.TickCount64;
+            if (now >= nextSystemCheck)
+            {
+                // SPI_GETCLIENTAREAANIMATION: read Windows' motion preference, never modify it.
+                // https://learn.microsoft.com/windows/win32/winauto/client-area-animation
+                systemAnimations = !SystemParametersInfo(0x1042, 0, out var allowed, 0) || allowed;
+                nextSystemCheck = now + 2000;
+            }
+            return systemAnimations;
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(uint action, uint parameter,
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)] out bool enabled, uint flags);
+
     internal const int Fast = 125;
     internal const int Normal = 235;
     internal const int Slow = 320;

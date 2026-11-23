@@ -11,16 +11,16 @@ internal sealed partial class MainForm
         RowCount = 1,
         Margin = Padding.Empty
     };
-    private readonly Panel pageHost = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
+    private readonly Panel pageHost = new BufferedSurface() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     private readonly Panel sidebar = new() { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(8) };
-    private readonly Panel homePage = new() { Dock = DockStyle.Fill, AutoScroll = true };
+    private readonly Panel homePage = new BufferedSurface() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly Dictionary<string, NavigationButton> navigation = [];
     private readonly Dictionary<string, NavigationButton> themeButtons = [];
     private readonly ToolTip shellTips = new() { InitialDelay = 150, ReshowDelay = 75, AutoPopDelay = 4000 };
     private readonly Label sidebarGame = TextLabel("", 9);
     private readonly Label sidebarDiscord = TextLabel("", 9);
     private readonly Label homeHeadline = TextLabel("", 12, true);
-    private readonly Label homeDetail = TextLabel("", 22, true);
+    private readonly Label homeDetail = TextLabel("", 18, true);
     private readonly Label homeState = TextLabel("", 12);
     private readonly Label homeStatus = TextLabel("", 10);
     private readonly Label homeElapsed = TextLabel("", 10, true);
@@ -73,7 +73,16 @@ internal sealed partial class MainForm
         dashboard.AutoSize = false;
         dashboard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         dashboard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        dashboard.Controls.Add(pageHost, 0, 0);
+        var canvas = Grid(1);
+        canvas.Dock = DockStyle.Fill;
+        canvas.AutoSize = false;
+        canvas.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        canvas.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        sessionNotice.Padding = new Padding(16, 8, 16, 8);
+        sessionNotice.Visible = false;
+        canvas.Controls.Add(sessionNotice, 0, 0);
+        canvas.Controls.Add(pageHost, 0, 1);
+        dashboard.Controls.Add(canvas, 0, 0);
         currentTripBar = CreateTripBar(() => Navigate("trip"));
         dashboard.Controls.Add(currentTripBar, 0, 1);
         statusToast = TextLabel("", 10, true);
@@ -158,12 +167,11 @@ internal sealed partial class MainForm
     private void ShowFromNavigation(string key, Action action)
     {
         foreach (var (name, button) in navigation) button.SetSelected(name == key);
-        var previousTitle = Text;
         if (navigation.TryGetValue(key, out var selected)) Text = $"ETS2 Discord Presence · {selected.Text}";
         try { action(); }
         finally
         {
-            Text = previousTitle;
+            UpdatePageTitle();
             foreach (var (name, button) in navigation) button.SetSelected(name == currentPage);
         }
     }
@@ -214,6 +222,7 @@ internal sealed partial class MainForm
         cardLayout.Controls.Add(homeLarge, 0, 0);
         cardLayout.Controls.Add(cardText, 1, 0);
         homeArtNote.Tag = "muted";
+        homeStatus.MinimumSize = new Size(0, 24);
         AddRows(cardText, homeHeadline, homeDetail, homeState, homeElapsed, homeStatus, homeArtNote);
         homeAction.Click += (_, _) =>
         {
@@ -234,7 +243,7 @@ internal sealed partial class MainForm
         homeConnectionNote.Tag = "muted";
         homeFriend.Tag = "muted";
         AddRows(activity, presenceTitle, cardLayout);
-        AddRows(content, activity, statusRow, homeConnectionNote);
+        AddRows(content, activity, statusRow, homeConnectionNote, homeFreshness);
         ObserveText(homeDetail, () => shellPalette.Accent);
         ObserveText(homeStatus, () => shellPalette.Accent);
         ObserveText(homeConnectionNote, () => shellPalette.Accent);
@@ -287,10 +296,14 @@ internal sealed partial class MainForm
         tools.Controls.Add(check);
         AddRows(connection, tools);
         AddRows(content, connection);
+        Size homeArranged = Size.Empty;
+        int homeArrangedText = -1;
         homePage.ClientSizeChanged += (_, _) => ResizeHome();
-
         void ResizeHome()
         {
+            if (homeArranged == homePage.ClientSize && homeArrangedText == preferences.TextPercent) return;
+            homeArranged = homePage.ClientSize;
+            homeArrangedText = preferences.TextPercent;
             var scale = DeviceDpi / 96f;
             var shortWindow = homePage.ClientSize.Height < 550 * scale;
             var inset = (int)((shortWindow ? 16 : 28) * scale);
@@ -324,7 +337,7 @@ internal sealed partial class MainForm
             var right = UiLabel(when, enWhen, header ? 9 : 10);
             if (header) left.Tag = "muted";
             right.Tag = "muted";
-            left.Margin = right.Margin = new Padding(0, 7, 6, 7);
+            left.Margin = right.Margin = new Padding(0, 8, 8, 8);
             var row = table.RowCount++;
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             table.Controls.Add(left, 0, row);
@@ -337,12 +350,22 @@ internal sealed partial class MainForm
 
     private void Navigate(string page, bool remember = true)
     {
+        if (page != currentPage && GuardSettingsNavigation(() => Navigate(page, remember))) return;
+        using var measurement = MeasureNavigation("page-" + page);
+        lastNavigationAt = Environment.TickCount64;
+        warmupCancellation?.Cancel();
         if (page == currentPage)
         {
             while (libraryPages.Count > 1) GoBackInLibrary();
             return;
         }
-        using var redraw = new UiRedrawScope(pageHost);
+        using var redraw = new UiRedrawScope(appShell);
+        var shellContainers = new[] { appShell, pageHost.Parent!, pageHost.Parent!.Parent! }.Distinct().ToArray();
+        foreach (var container in shellContainers) container.SuspendLayout();
+        using var shellLayout = new OnDispose(() =>
+        {
+            foreach (var container in shellContainers) container.ResumeLayout(true);
+        });
         using var homeLayout = page == "home" ? new UiLayoutBatch(homePage) : null;
         using var tripLayout = page == "trip" ? new UiLayoutBatch(tripShellPage) : null;
         pageHost.SuspendLayout();
@@ -353,10 +376,11 @@ internal sealed partial class MainForm
             currentPage = page;
             homePage.Visible = page == "home";
             tripShellPage.Visible = page == "trip";
-            if (page is "journal" or "replay" or "settings" && !RestoreLibraryPages(page))
+            if (page is "journal" or "replay" or "settings" or "help" && !RestoreLibraryPages(page))
             {
                 if (page == "journal") ShowHistory();
                 else if (page == "replay") ShowRecordings();
+                else if (page == "help") BuildHelpPage();
                 else BuildSettings();
             }
             UpdatePageTitle();
@@ -367,14 +391,17 @@ internal sealed partial class MainForm
         {
             homeLayout?.Dispose();
             tripLayout?.Dispose();
-            pageHost.ResumeLayout(true);
+            pageHost.ResumeLayout(false);
         }
         UpdateReplayVisibility();
         RefreshTripView();
         RenderDriveOverview(displayedDrive, driveConnected, driveSharing);
         RenderPreview(displayedOutgoing, displayedSample);
+        RenderPresentationStatus();
         if (remember && page is "home" or "trip" && preferences.Features.LastSection != page)
             RememberLandingPage(page);
+        shellLayout.Dispose();
+        appShell.PerformLayout();
     }
 
     private void ResizeShell()
@@ -389,11 +416,14 @@ internal sealed partial class MainForm
         };
         var sidebarWidth = fullScreen ? 0 : (collapsed ? 56 : 200) * scale;
         if (Math.Abs(appShell.ColumnStyles[0].Width - sidebarWidth) > .5f) appShell.ColumnStyles[0].Width = sidebarWidth;
+        RenderPresentationStatus();
+        RenderDriveOverview(displayedDrive, driveConnected, driveSharing);
         if (narrowShell == collapsed) return;
         narrowShell = collapsed;
         foreach (var button in navigation.Values) { button.IconsOnly = collapsed; button.Invalidate(); }
         themeStrip.Visible = !collapsed;
         UpdateShellLabels();
+        RenderPresentationStatus();
     }
 
     private void ApplyShellTheme()
@@ -466,7 +496,8 @@ internal sealed partial class MainForm
     private void UpdateShellLabels()
     {
         var game = !hasShellStatus ? L("Buscando ETS2", "Checking ETS2")
-            : shellGameOpen ? L("ETS2 abierto", "ETS2 running") : L("ETS2 cerrado", "ETS2 closed");
+            : liveSnapshot is not null ? L("ETS2 conectado", "ETS2 connected")
+            : shellGameOpen ? L("ETS2 esperando datos", "ETS2 waiting for data") : L("ETS2 cerrado", "ETS2 closed");
         var discord = !hasShellStatus ? L("Buscando Discord", "Checking Discord")
             : shellDiscordReady ? L("Discord conectado", "Discord connected") : L("Discord sin conexión", "Discord offline");
         var iconsOnly = sidebar.ClientSize.Width > 0 && sidebar.ClientSize.Width < 100 * DeviceDpi / 96f;
@@ -497,7 +528,8 @@ internal sealed partial class MainForm
 
     private void RenderHomePresence(PresenceText? shown, PresenceText? outgoing, string? age)
     {
-        if (!homePage.Visible) return;
+        if (!homePage.Visible || UiBusy) return;
+        using var scrollPosition = PreserveScroll(homePage);
         hasShellStatus = true;
         shellGameOpen = gameRunning;
         shellDiscordReady = discordReady;
@@ -523,19 +555,23 @@ internal sealed partial class MainForm
             || liveSnapshot is null && (restartNeeded || setupError is not null || preferences.ReaderDisabled);
         homeArtNote.Text = shown?.Image is not null ? homeArtworkNote ?? "" : "";
         homeArtNote.Visible = homeArtNote.Text.Length > 0;
-        homeHeadline.Text = shown is null ? L("Sin actividad publicada", "No activity published") : DiscordIdentity.ActivityName;
+        homeHeadline.Text = demo || demoScenario is not null ? L("Vista previa de ejemplo", "Sample preview")
+            : shown is null ? L("Sin actividad publicada", "No activity published") : DiscordIdentity.ActivityName;
         homeDetail.Text = shown?.Details ?? "";
         homeDetail.Visible = shown is not null;
         homeState.Text = shown?.State ?? "";
         homeState.Visible = shown is not null && homeState.Text.Length > 0;
         var note = outgoing is not null ? (discordConfirmed ? L("Texto confirmado por Discord", "Text acknowledged by Discord")
             : L("Enviada a Discord", "Sent to Discord"))
-            : shown is not null ? L("Vista previa local", "Local preview")
+            : shown is not null ? demo || demoScenario is not null ? L("Vista previa local", "Local preview")
+                : L("Preparada · Aún no enviada a Discord", "Prepared · Not yet sent to Discord")
             : !preferences.Sharing ? L("Publicación en pausa", "Publishing paused")
             : !gameRunning ? L("ETS2 está cerrado", "ETS2 is closed")
             : liveSnapshot is null ? L("Esperando una partida", "Waiting for a game session")
             : L("Esperando Discord", "Waiting for Discord");
-        homeStatus.Text = note;
+        var sentAt = Interlocked.Read(ref lastDiscordPublication);
+        homeStatus.Text = note + (outgoing is not null && sentAt > 0
+            ? " · " + DateTimeOffset.FromUnixTimeSeconds(sentAt).LocalDateTime.ToString("T") : "");
         homeElapsed.Text = age is null ? "" : L($"Tiempo transcurrido  {age}", $"Elapsed  {age}");
         homeElapsed.Visible = age is not null;
         homeFriend.Text = shown is null ? L("Sin actividad visible", "No visible activity")
@@ -564,7 +600,7 @@ internal sealed partial class MainForm
     {
         public HeadingLabel()
         {
-            Font = new Font("Segoe UI", 23, FontStyle.Bold);
+            Font = new Font("Segoe UI", 20, FontStyle.Bold);
             Dock = DockStyle.Fill;
             AutoSize = true;
             AccessibleRole = AccessibleRole.StaticText;
@@ -636,7 +672,7 @@ internal sealed partial class MainForm
             ColumnCount = 1;
             Dock = DockStyle.Top;
             Padding = new Padding(24, 16, 24, 16);
-            Margin = new Padding(0, 0, 0, 18);
+            Margin = new Padding(0, 0, 0, 16);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)

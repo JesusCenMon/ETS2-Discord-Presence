@@ -2,6 +2,38 @@ namespace Ets2DiscordPresence;
 
 internal static class JournalQuery
 {
+    internal sealed record Filter(string Search, DateTime? From, DateTime? To, bool Favorites,
+        int Result, string? Truck, int Range, bool Miles, string? Tag, string Sort, bool Descending);
+    internal sealed record ResultSet(TripEntry[] Entries, int Delivered, int Cancelled, double Km,
+        double Seconds, string? TopRoute);
+
+    internal static ResultSet Execute(IReadOnlyList<TripEntry> source, Filter filter, CancellationToken cancellation)
+    {
+        var matches = new List<TripEntry>();
+        for (var index = 0; index < source.Count; index++)
+        {
+            if ((index & 127) == 0) cancellation.ThrowIfCancellationRequested();
+            var entry = source[index];
+            if (entry.Finished is not { } finish
+                || filter.From is { } from && finish.LocalDateTime.Date < from
+                || filter.To is { } to && finish.LocalDateTime.Date > to
+                || filter.Favorites && !entry.Favorite
+                || !Matches(entry, filter.Result, filter.Truck, filter.Range, filter.Miles, filter.Tag)) continue;
+            bool Contains(string? value) => value?.Contains(filter.Search, StringComparison.CurrentCultureIgnoreCase) == true;
+            if (filter.Search.Length > 0 && !(Contains(entry.Origin) || Contains(entry.Destination)
+                || Contains(entry.Cargo) || Contains(entry.Tags) || Contains(entry.Notes))) continue;
+            matches.Add(entry);
+        }
+        cancellation.ThrowIfCancellationRequested();
+        var sorted = Sort(matches, filter.Sort, filter.Descending).ToArray();
+        cancellation.ThrowIfCancellationRequested();
+        var delivered = sorted.Where(entry => entry.Result == "delivered").ToArray();
+        return new(sorted, delivered.Length, sorted.Count(entry => entry.Result == "cancelled"),
+            sorted.Sum(entry => entry.Km), sorted.Sum(entry => entry.DrivingSeconds),
+            delivered.GroupBy(entry => $"{entry.Origin} → {entry.Destination}")
+                .OrderByDescending(group => group.Count()).FirstOrDefault()?.Key);
+    }
+
     public static string[] Tags(string? value) =>
         (value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 

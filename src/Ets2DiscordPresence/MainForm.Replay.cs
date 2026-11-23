@@ -11,6 +11,9 @@ internal sealed partial class MainForm
     private void ShowRecordings()
     {
         var window = new LibraryPage(L("Repeticiones", "Replays"));
+        var savedView = viewState.Get<ReplayViewState>("replays") ?? new();
+        savedView = savedView with { Search = savedView.Search ?? "" };
+        var restoreSelection = true;
         var rowText = new Dictionary<string, (string Title, string Detail)>(StringComparer.OrdinalIgnoreCase);
         var list = new ListBox
         {
@@ -103,17 +106,23 @@ internal sealed partial class MainForm
         var search = new TextBox { Dock = DockStyle.Top, PlaceholderText = L("Buscar ciudad, camión, fecha o marcador…", "Find city, truck, date or marker…") };
         var favoritesOnly = MakeButton(L("Solo favoritos", "Favorites only"));
         favoritesOnly.AccessibleDescription = L("Activar o quitar el filtro de favoritos.", "Toggle the favorites filter.");
-        var onlyFavorites = false;
+        var onlyFavorites = savedView.Favorites;
+        favoritesOnly.Tag = onlyFavorites ? "primary" : "quiet";
+        search.Text = savedView.Search.Length <= 256 ? savedView.Search : "";
         var filters = ToolBar();
         filters.Controls.Add(favoritesOnly);
-        AddRows(heading, TextLabel(L("Repeticiones", "Replays"), 23, true), info, search, filters, bar);
+        AddRows(heading, TextLabel(L("Repeticiones", "Replays"), 20, true), info, search, filters, bar);
         var emptyState = EmptyState("play_circle", L("Sin grabaciones", "No recordings"));
         emptyState.Dock = DockStyle.Fill;
+        AddEmptyActions(emptyState,
+            (L("Abrir grabación…", "Open recording…"), () => open.PerformClick()),
+            (L("Quitar búsqueda", "Clear search"), () => { search.Clear(); if (onlyFavorites) favoritesOnly.PerformClick(); }));
         window.Controls.Add(list);
         window.Controls.Add(emptyState);
         window.Controls.Add(heading);
         RecordingItem[] items = [];
-        var catalog = new Dictionary<string, (long Bytes, DateTime Modified, RecordingItem Item)>(StringComparer.OrdinalIgnoreCase);
+        var catalog = warmRecordings ?? new Dictionary<string, (long Bytes, DateTime Modified, RecordingItem Item)>(StringComparer.OrdinalIgnoreCase);
+        warmRecordings = null;
         var loading = false;
         var catalogReady = false;
         long nextCatalogCheck = 0;
@@ -131,6 +140,13 @@ internal sealed partial class MainForm
             {
                 var selected = list.SelectedItems.Cast<RecordingItem>().Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var top = Math.Max(0, list.TopIndex);
+                if (restoreSelection)
+                {
+                    top = Math.Max(0, savedView.Scroll);
+                    if (savedView.Selected is { } name)
+                        foreach (var item in matches.Where(item => Path.GetFileName(item.Path) == name)) selected.Add(item.Path);
+                    restoreSelection = false;
+                }
                 list.BeginUpdate();
                 try
                 {
@@ -224,7 +240,14 @@ internal sealed partial class MainForm
             if (!catalogReady || Environment.TickCount64 >= nextCatalogCheck) Populate();
             else UpdateButtons();
         };
-        window.Deactivated = () => { searchDelay.Stop(); catalogLoad?.Cancel(); };
+        void SaveView()
+        {
+            viewState.Set("replays", new ReplayViewState(search.Text[..Math.Min(256, search.Text.Length)], onlyFavorites,
+                list.SelectedItem is RecordingItem item ? Path.GetFileName(item.Path) : null, Math.Max(0, list.TopIndex)));
+            _ = viewState.SaveAsync();
+        }
+        window.Deactivated = () => { searchDelay.Stop(); catalogLoad?.Cancel(); SaveView(); };
+        window.Leaving += SaveView;
         void UpdateButtons()
         {
             record.Text = recording is null ? L("Empezar a grabar", "Start recording") : L("Detener grabación", "Stop recording");
@@ -410,7 +433,7 @@ internal sealed partial class MainForm
             "free" => L("Conducción libre", "Free driving"),
             _ => ""
         };
-        var replayHeading = TextLabel(routeName.Length > 0 ? routeName : Path.GetFileNameWithoutExtension(path), 23, true);
+        var replayHeading = TextLabel(routeName.Length > 0 ? routeName : Path.GetFileNameWithoutExtension(path), 18, true);
         void WrapHeading() => SetWrap(replayHeading, window.ClientSize.Width - 16);
         window.ClientSizeChanged += (_, _) => WrapHeading();
         WrapHeading();
@@ -572,6 +595,9 @@ internal sealed partial class MainForm
         var setA = MakeButton(L("Marcar A", "Set A"));
         var setB = MakeButton(L("Marcar B", "Set B"));
         var loop = new CheckBox { Text = L("Repetir A–B", "Loop A–B"), AutoSize = true, Enabled = false, FlatStyle = FlatStyle.Flat };
+        loop.Visible = false;
+        var loopHint = TextLabel(L("Define A y B para repetir un tramo", "Set A and B to loop a range"), 9);
+        loopHint.Tag = "muted";
         var extra = new ContextMenuStrip();
         var more = MakeButton("⋯");
         more.AccessibleName = L("Más acciones de reproducción", "More replay actions");
@@ -584,7 +610,7 @@ internal sealed partial class MainForm
         more.Click += (_, _) => extra.Show(more, new Point(0, more.Height));
         var playback = ToolBar();
         playback.Controls.AddRange([play, speed]);
-        bar.Controls.AddRange([setA, setB, loop, jump, mode, more]);
+        bar.Controls.AddRange([setA, setB, loop, loopHint, jump, mode, more]);
         if (read.RecoveredTail)
         {
             var repair = MakeButton(L("Guardar copia reparada…", "Save repaired copy…"));
@@ -631,7 +657,13 @@ internal sealed partial class MainForm
         var playerRow = Grid(1);
         playerRow.BackColor = shellPalette.Surface;
         AddRows(playerRow, times, playback);
-        AddRows(footer, status, units, graph, eventTicks, slider, playerRow, loopDuration, bar);
+        AddRows(footer, status, units, graph, eventTicks, loopDuration, bar);
+        var transport = Grid(1);
+        transport.Dock = DockStyle.Bottom;
+        transport.Padding = new Padding(8);
+        transport.BackColor = shellPalette.Surface;
+        AddRows(transport, slider, playerRow);
+        window.Controls.Add(transport);
         var player = new Panel { Dock = DockStyle.Top };
         player.Controls.Add(map);
         player.Controls.Add(moments);
@@ -641,6 +673,7 @@ internal sealed partial class MainForm
         var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         viewport.Controls.Add(player);
         window.Controls.Add(viewport);
+        window.Controls.SetChildIndex(transport, window.Controls.Count - 1);
         void SizePlayer()
         {
             var minimum = replayHeader.Height + mapTools.Height + footer.Height + 160;
@@ -680,7 +713,7 @@ internal sealed partial class MainForm
                 ? $" · {Math.Abs(value * 3.6):N0} km/h" : "";
             var maximum = maxSpeed >= 0 ? $" · {L("Máxima", "Top speed")} {SpeedLabel(maxSpeed)}" : "";
             replayPosition.Text = ReplayTime(slider.Value);
-            status.Text = $"{L("Reproducción local", "Local replay")}{velocity}{maximum}";
+            status.Text = $"{PresentationState.ReplayStatus(playing, slider.Value, slider.Maximum, English)} · {L("Solo en esta app", "Local only")}{velocity}{maximum}";
             var action = playing ? L("Pausar", "Pause") : L("Reproducir", "Play");
             if (play.Text != action)
             {
@@ -739,6 +772,8 @@ internal sealed partial class MainForm
             setA.Text = loopStart is { } a ? $"A · {ReplayTime(a)}" : L("Marcar A", "Set A");
             setB.Text = loopEnd is { } b ? $"B · {ReplayTime(b)}" : L("Marcar B", "Set B");
             loop.Enabled = loopStart is { } from && loopEnd is { } to && from < to;
+            loop.Visible = loop.Enabled;
+            loopHint.Visible = !loop.Enabled;
             if (!loop.Enabled) loop.Checked = false;
             graph.SetLoop(loop.Enabled ? loopStart : null, loop.Enabled ? loopEnd : null, Motion);
             loopDuration.Text = loop.Enabled ? L($"Tramo A–B · {ReplayTime(loopEnd!.Value - loopStart!.Value)}",
@@ -883,13 +918,13 @@ internal sealed partial class MainForm
         public void SetMetric(int mode)
         {
             metric = mode;
-            ceiling = mode == 0 ? 180 : Math.Max(3, (float)Math.Ceiling(frames.Select(Value).OfType<float>().DefaultIfEmpty().Max() / 30) * 30);
             plot?.Dispose();
             plot = null;
+            QueuePlot();
             Invalidate();
         }
 
-        private float? Value(RecordedFrame frame) => metric switch
+        private static float? Value(RecordedFrame frame, int metric) => metric switch
         {
             1 => frame.Trip?.Truck?.Litres is >= 0 and < 20_000 ? frame.Trip.Truck.Litres : null,
             2 => frame.Trip?.RemainingKm is { } km ? (float)km : null,
@@ -905,6 +940,13 @@ internal sealed partial class MainForm
             maximum = (int)Math.Max(1, frames[^1].ElapsedMs);
             DoubleBuffered = true;
             ResizeRedraw = true;
+            FontChanged += (_, _) =>
+            {
+                Height = Math.Max(96 * DeviceDpi / 96, Font.Height * 4);
+                plot?.Dispose(); plot = null; plotCancellation?.Cancel();
+                Invalidate();
+            };
+            VisibleChanged += (_, _) => { if (!Visible) plotCancellation?.Cancel(); else QueuePlot(); };
         }
 
         public void SetElapsed(long value)
@@ -931,23 +973,19 @@ internal sealed partial class MainForm
             });
         }
 
-        internal float PositionAt(long time) => 42 + time * (float)PlotWidth / maximum;
-        private int PlotWidth => Math.Max(1, Width - 52);
+        private int AxisInset => Math.Max(42, TextRenderer.MeasureText("999", Font).Width + 12);
+        internal float PositionAt(long time) => AxisInset + time * (float)PlotWidth / maximum;
+        private int PlotWidth => Math.Max(1, Width - AxisInset - 10);
 
-        public long TimeAt(int x) => (long)(Math.Clamp((x - 42d) / PlotWidth, 0, 1) * maximum);
+        public long TimeAt(int x) => (long)(Math.Clamp((x - (double)AxisInset) / PlotWidth, 0, 1) * maximum);
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
             if (Width <= 0 || Height <= 0) return;
-            if (plot?.Size != Size)
-            {
-                plot?.Dispose();
-                plot = new Bitmap(Width, Height);
-                using var drawing = Graphics.FromImage(plot);
-                DrawPlot(drawing);
-            }
-            e.Graphics.DrawImageUnscaled(plot, 0, 0);
+            if (plot?.Size != Size) QueuePlot();
+            if (plot is not null) e.Graphics.DrawImageUnscaled(plot, 0, 0);
+            else e.Graphics.Clear(background);
             if (loopRange is { } range)
             {
                 using var rangeColor = new SolidBrush(Color.FromArgb(38, accent));
@@ -967,27 +1005,77 @@ internal sealed partial class MainForm
             e.Graphics.DrawLine(cursorPen, cursor, 4, cursor, Height - 20);
         }
 
-        private void DrawPlot(Graphics g)
+        private CancellationTokenSource? plotCancellation;
+        private Size requestedSize;
+        private int requestedMetric = -1;
+
+        private async void QueuePlot()
         {
+            if (IsDisposed || !IsHandleCreated || !Visible || Width < 64 || Height < 40) return;
+            var size = Size;
+            var mode = metric;
+            if (plotCancellation is not null && requestedSize == size && requestedMetric == mode) return;
+            plotCancellation?.Cancel();
+            using var request = new CancellationTokenSource();
+            plotCancellation = request;
+            requestedSize = size;
+            requestedMetric = mode;
+            var fontName = Font.FontFamily.Name;
+            var fontSize = Font.SizeInPoints;
+            var fontStyle = Font.Style;
+            var data = frames.ToArray();
+            try
+            {
+                var rendered = await Task.Run(() =>
+                {
+                    request.Token.ThrowIfCancellationRequested();
+                    var limit = mode == 0 ? 180 : Math.Max(3, (float)Math.Ceiling(data.Select(frame => Value(frame, mode)).OfType<float>().DefaultIfEmpty().Max() / 30) * 30);
+                    var bitmap = new Bitmap(size.Width, size.Height);
+                    try
+                    {
+                        using var font = new Font(fontName, fontSize, fontStyle);
+                        using var drawing = Graphics.FromImage(bitmap);
+                        DrawPlot(drawing, size, font, data, mode, limit, request.Token);
+                        return (Bitmap: bitmap, Limit: limit);
+                    }
+                    catch { bitmap.Dispose(); throw; }
+                }, request.Token);
+                if (IsDisposed || request.IsCancellationRequested || size != Size || mode != metric)
+                { rendered.Bitmap.Dispose(); return; }
+                var previous = plot;
+                plot = rendered.Bitmap;
+                ceiling = rendered.Limit;
+                previous?.Dispose();
+                Invalidate();
+            }
+            catch (OperationCanceledException) { }
+            finally { if (ReferenceEquals(plotCancellation, request)) plotCancellation = null; }
+        }
+
+        private void DrawPlot(Graphics g, Size size, Font font, RecordedFrame[] data, int mode, float limit, CancellationToken cancellation)
+        {
+            var left = Math.Max(42, TextRenderer.MeasureText("999", font).Width + 12);
+            var plotWidth = Math.Max(1, size.Width - left - 10);
+            float PositionAt(long time) => left + time * (float)plotWidth / maximum;
             g.Clear(background);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            var height = Math.Max(1, Height - 29);
+            var height = Math.Max(1, size.Height - font.Height - 16);
             using var grid = new Pen(Color.FromArgb(85, ink));
             using var trace = new Pen(accent, 2);
             for (var i = 0; i <= 3; i++)
             {
                 var y = 7 + height * (3 - i) / 3;
-                g.DrawLine(grid, 42, y, Width - 10, y);
-                TextRenderer.DrawText(g, (i * ceiling / 3).ToString("0"), Font, new Point(4, y - 8), ink);
+                g.DrawLine(grid, left, y, size.Width - 10, y);
+                TextRenderer.DrawText(g, (i * limit / 3).ToString("0"), font, new Point(4, y - font.Height / 2), ink);
             }
-            var ticks = Width < 340 ? 2 : 4;
+            var ticks = size.Width < 340 ? 2 : 4;
             for (var i = 0; i <= ticks; i++)
             {
                 var at = maximum * (long)i / ticks;
                 var caption = ReplayTime(at);
-                var width = TextRenderer.MeasureText(caption, Font).Width;
-                var x = Math.Clamp((int)PositionAt(at) - width / 2, 0, Math.Max(0, Width - width));
-                TextRenderer.DrawText(g, caption, Font, new Point(x, Height - 19), ink);
+                var width = TextRenderer.MeasureText(caption, font).Width;
+                var x = Math.Clamp((int)PositionAt(at) - width / 2, 0, Math.Max(0, size.Width - width));
+                TextRenderer.DrawText(g, caption, font, new Point(x, size.Height - font.Height - 2), ink);
             }
             PointF? previous = null;
             PointF? bucketLast = null;
@@ -1002,9 +1090,10 @@ internal sealed partial class MainForm
             }
             long? missingSince = null;
             using var gap = new HatchBrush(HatchStyle.ForwardDiagonal, Color.FromArgb(100, ink), Color.Transparent);
-            foreach (var frame in frames)
+            foreach (var frame in data)
             {
-                if (Value(frame) is not { } value)
+                cancellation.ThrowIfCancellationRequested();
+                if (Value(frame, mode) is not { } value)
                 {
                     FlushBucket();
                     previous = null;
@@ -1014,12 +1103,12 @@ internal sealed partial class MainForm
                 }
                 if (missingSince is { } since)
                 {
-                    var left = PositionAt(since);
-                    g.FillRectangle(gap, left, 7, Math.Max(1, PositionAt(frame.ElapsedMs) - left), height);
+                    var gapLeft = PositionAt(since);
+                    g.FillRectangle(gap, gapLeft, 7, Math.Max(1, PositionAt(frame.ElapsedMs) - gapLeft), height);
                     missingSince = null;
                 }
-                var point = new PointF(42 + frame.ElapsedMs * (float)PlotWidth / maximum,
-                    7 + height * (1 - Math.Clamp(value, 0, ceiling) / ceiling));
+                var point = new PointF(left + frame.ElapsedMs * (float)plotWidth / maximum,
+                    7 + height * (1 - Math.Clamp(value, 0, limit) / limit));
                 var column = (int)point.X;
                 if (column != bucket)
                 {
@@ -1039,7 +1128,7 @@ internal sealed partial class MainForm
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) plot?.Dispose();
+            if (disposing) { plotCancellation?.Cancel(); plot?.Dispose(); }
             base.Dispose(disposing);
         }
     }

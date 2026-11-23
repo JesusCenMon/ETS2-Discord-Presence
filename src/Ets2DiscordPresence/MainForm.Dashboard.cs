@@ -106,7 +106,8 @@ internal sealed partial class MainForm
 
     private void RefreshTripView()
     {
-        if (!tripShellPage.Visible || pendingTripView is not { } view) return;
+        if (!tripShellPage.Visible || UiBusy || pendingTripView is not { } view) return;
+        using var scrollPosition = PreserveScroll(scroll);
         if (ReferenceEquals(renderedTripView, view) && ReferenceEquals(renderedTripSettings, preferences)
             && renderedFullScreen == fullScreen) return;
         using var redraw = new UiRedrawScope(tripShellPage);
@@ -180,6 +181,20 @@ internal sealed partial class MainForm
 
     private static readonly HttpClient PreviewClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
+    private long lastDiscordAcknowledgement;
+    private int artworkFallbacks;
+    private long PreviewCacheBytes => previewImages.Values.Sum(item => (long)item.Image.Width * item.Image.Height * 4);
+
+    private void TrimPreviewCache(long budget)
+    {
+        while (previewImages.Count > 12 || PreviewCacheBytes > budget)
+        {
+            var oldest = previewImages.MinBy(item => item.Value.Used);
+            previewImages.Remove(oldest.Key);
+            oldest.Value.Image.Dispose();
+        }
+    }
+
     private sealed record CachedPreview(Bitmap Image, long Used);
     private readonly Dictionary<string, CachedPreview> previewImages = [];
     private readonly Dictionary<string, DateTime> failedArtwork = [];
@@ -240,13 +255,9 @@ internal sealed partial class MainForm
         }
         if (previewImages.Remove(key, out var replaced)) replaced.Image.Dispose();
         previewImages[key] = new(thumbnail, Environment.TickCount64);
-        while (previewImages.Count > 8)
-        {
-            var oldest = previewImages.MinBy(entry => entry.Value.Used);
-            previewImages.Remove(oldest.Key);
-            oldest.Value.Image.Dispose();
-        }
-        return new Bitmap(thumbnail);
+        var result = new Bitmap(thumbnail);
+        TrimPreviewCache(8_000_000);
+        return result;
     }
 
     private Image? LoadPreviewImage(string? image)
@@ -273,8 +284,9 @@ internal sealed partial class MainForm
     {
         displayedOutgoing = outgoing;
         displayedSample = sample;
-        if (!homePage.Visible && !tripShellPage.Visible && quickWindow?.Visible != true) return;
-        var shown = outgoing ?? (demo || demoScenario is not null ? sample : null);
+        if (UiBusy) return;
+        if ((!Visible || !homePage.Visible && !tripShellPage.Visible) && quickWindow?.Visible != true) return;
+        var shown = outgoing ?? (demo || demoScenario is not null || preferences.Sharing ? sample : null);
         var elapsed = shown?.Started is { } start ? DateTime.UtcNow - start : TimeSpan.Zero;
         var age = shown?.Started is null ? null : $"{Math.Max(0, (int)elapsed.TotalHours):00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
         previewMetadata.Text = shown is null ? L("Sin actividad enviada", "No activity sent")
@@ -287,7 +299,13 @@ internal sealed partial class MainForm
             previewLarge.Image = LoadPreviewImage(previewImageKey);
             SyncHomeArt();
             previous?.Dispose();
-            if (previewLarge.Image is null && previewImageKey is { } remote) _ = UpdateLargePreviewAsync(remote);
+            if (previewLarge.Image is null && previewImageKey is { } remote)
+            {
+                artworkFallbacks++;
+                previewLarge.Image = LoadPreviewImage(DiscordIdentity.ImageFor(null, coach: liveSnapshot?.Coach == true));
+                SyncHomeArt();
+                _ = UpdateLargePreviewAsync(remote);
+            }
         }
         RenderHomePresence(shown, outgoing, age);
         previewArt.Visible = previewLarge.Image is not null;
@@ -434,71 +452,42 @@ internal sealed partial class MainForm
         RefreshPresence();
     }
 
-    private void ShowConnectionGuide()
-    {
-        using var window = ToolWindow(L("Comprobar conexión", "Check connection"), new Size(580, 405));
-        var content = Grid(1);
-        content.Padding = new Padding(16);
-        var steps = TextLabel("", 11, true);
-        void Render()
-        {
-            var active = liveSnapshot is not null && discordReady && preferences.Sharing
-                && !demo && demoScenario is null && !privateForSession && !(privateUntil > DateTimeOffset.UtcNow);
-            steps.Text = $"1. {gameStatus.Text}\n2. {discordStatus.Text}\n3. "
-                + (active && discordConfirmed ? L("Texto confirmado por Discord", "Text acknowledged by Discord")
-                    : active ? L("Actividad enviada, esperando respuesta", "Activity sent, awaiting acknowledgement")
-                    : L("Actividad pendiente", "Activity pending"))
-                + $"\n\n{guidance.Text}\n{ScreenDiagnostic()}";
-        }
-        AddRows(content, TextLabel(L("Conectar ETS2 con Discord", "Connect ETS2 to Discord"), 16, true), steps);
-        AddAction(content, L("Abrir Discord", "Open Discord"), () => OpenExternal("discord://"));
-        AddAction(content, L("Abrir ETS2", "Launch ETS2"), () => OpenExternal("steam://rungameid/227300"));
-        AddAction(content, L("Comprobar ahora", "Check now"), () => { RefreshPresence(); Render(); });
-        AddAction(content, L("Republicar actividad", "Republish activity"), () =>
-        {
-            Interlocked.Increment(ref connectionGeneration);
-            publishImmediately = true;
-            RefreshPresence();
-            Render();
-        });
-        AddAction(content, L("Exportar diagnóstico…", "Export diagnostics…"), () => ExportDiagnostics(window));
-        var artStatus = TextLabel("", 10);
-        AddRows(content, artStatus);
-        AddAction(content, L("Comprobar imágenes de Discord", "Check Discord artwork"), async () =>
-        {
-            artStatus.Text = L("Comprobando…", "Checking…");
-            var visible = PresencePrivacy.Apply(preferences, liveSnapshot?.OnJob, privateDestination);
-            var code = visible.SharesCountry ? currentCountry : null;
-            var english = preferences.DiscordLanguage == "en";
-            var images = new[] { DiscordIdentity.ImageFor(code, english: english),
-                DiscordIdentity.ImageFor(code, english: english, coach: true) };
-            var checks = await Task.WhenAll(images.Select(VerifyArtworkAsync));
-            if (!window.IsDisposed) artStatus.Text = L($"Imágenes disponibles · {checks.Count(available => available)} de {images.Length}",
-                $"Artwork available · {checks.Count(available => available)} of {images.Length}");
-        });
-        var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        panel.Controls.Add(content);
-        window.Controls.Add(panel);
-        SetWrap(steps, window.ClientSize.Width - 64);
-        window.Resize += (_, _) => SetWrap(steps, window.ClientSize.Width - 64);
-        Render();
-        StyleTool(window);
-        window.ShowDialog(this);
-    }
+    private void ShowConnectionGuide() => Navigate("help");
 
     private void ExportDiagnostics(IWin32Window owner)
     {
-        using var picker = new SaveFileDialog { Filter = "TXT (*.txt)|*.txt", FileName = "ETS2-diagnostico.txt" };
-        if (picker.ShowDialog(owner) != DialogResult.OK) return;
-        var version = SteamLocator.IsValidGamePath(gamePath)
-            ? System.Diagnostics.FileVersionInfo.GetVersionInfo(Path.Combine(gamePath!, "bin", "win_x64", "eurotrucks2.exe")).FileVersion : null;
-        var report = string.Join(Environment.NewLine, $"ETS2 Discord Presence {DesktopServices.Version.ToString(3)}",
-            $"OS {Environment.OSVersion.Version}", $"ETS2: {version ?? "—"}", $"Plugin API: {lastRevision?.ToString() ?? "—"}",
-            gameStatus.Text, discordStatus.Text, $"Setup error: {setupError is not null}", $"Reader error: {readerError is not null}",
-            $"Discord connection: {DiscordDiagnosticTime(Interlocked.Read(ref lastDiscordConnection))}",
-            $"Discord publication: {DiscordDiagnosticTime(Interlocked.Read(ref lastDiscordPublication))}",
-            $"Discord error: {lastDiscordError ?? "—"}");
-        DataAction(owner, () => File.WriteAllText(picker.FileName, report));
+        var page = new LibraryPage(L("Revisar diagnóstico", "Review diagnostics"));
+        page.Size = pageHost.ClientSize;
+        using var construction = new UiLayoutBatch(page);
+        var content = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+            ScrollBars = ScrollBars.Both, WordWrap = false, Text = BuildDiagnosticReport(),
+            AccessibleName = L("Informe que se guardará", "Report to be saved") };
+        var heading = Grid(1);
+        heading.Padding = new Padding(24, 16, 24, 16);
+        AddRows(heading, TextLabel(page.Text, 20, true), TextLabel(L(
+            "No contiene nombres, rutas de archivos, coordenadas ni capturas. Se guarda solo si lo eliges; no se envía automáticamente.",
+            "Contains no names, file paths, coordinates or screenshots. Saved only when you choose; never sent automatically."), 10));
+        var bar = ToolBar();
+        var save = MakeButton(L("Guardar informe…", "Save report…"));
+        save.Tag = "primary";
+        save.Click += (_, _) =>
+        {
+            using var picker = new SaveFileDialog { Filter = "TXT (*.txt)|*.txt", FileName = "ETS2-diagnostics.txt" };
+            if (picker.ShowDialog(this) == DialogResult.OK && DataAction(this, () => File.WriteAllText(picker.FileName, content.Text)))
+                ShowStatusToast(L("Informe guardado", "Report saved"));
+        };
+        bar.Controls.AddRange([BackButton(), save]);
+        AddRows(heading, bar);
+        page.Controls.Add(content);
+        page.Controls.Add(heading);
+        page.ClientSizeChanged += (_, _) =>
+        {
+            foreach (var label in heading.Controls.OfType<Label>()) SetWrap(label, page.ClientSize.Width - 64);
+        };
+        StyleTool(page);
+        construction.Dispose();
+        page.PerformLayout();
+        PushLibraryPage(page);
     }
 
     private static string DiscordDiagnosticTime(long seconds) => seconds == 0 ? "—" : DateTimeOffset.FromUnixTimeSeconds(seconds).ToString("O");

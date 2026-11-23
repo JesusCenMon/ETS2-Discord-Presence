@@ -16,7 +16,7 @@ internal sealed partial class MainForm
             [L("Automático", "Automatic"), L("Compacto", "Compact"), L("Completo", "Full")],
             current.SidebarSize switch { "compact" => 1, "full" => 2, _ => 0 });
         var reduceMotion = Check(style, L("Reducir movimiento", "Reduce motion"), current.ReduceMotion);
-        int[] tableSizes = [100, 125, 150];
+        int[] tableSizes = [100, 125, 150, 175, 200];
         var tableSize = Choice(style, L("Tamaño de texto en tablas", "Table text size"),
             tableSizes.Select(size => $"{size}%").ToArray(), Math.Max(0, Array.IndexOf(tableSizes, current.TableTextPercent)));
         var pins = new[] { "record", "privacy", "obs" };
@@ -314,6 +314,31 @@ internal sealed partial class MainForm
         heading.Controls.Add(openSearch, 1, 0);
         AddRows(bar, heading, input, results);
         owner.Controls.Add(bar);
+        var fittingSearch = false;
+        void FitSearch()
+        {
+            if (fittingSearch) return;
+            fittingSearch = true;
+            try
+            {
+                var label = input.Visible ? L("Cerrar búsqueda", "Close search") : L("Buscar en ajustes", "Search settings");
+                var available = Math.Max(120, owner.ClientSize.Width - bar.Padding.Horizontal);
+                var compact = available < TextRenderer.MeasureText(label, openSearch.Font).Width
+                    + TextRenderer.MeasureText(breadcrumb.Text, breadcrumb.Font).Width + 80;
+                openSearch.AccessibleName = label;
+                openSearch.Text = compact ? "" : label;
+                shellTips.SetToolTip(openSearch, label);
+                SetWrap(breadcrumb, available - openSearch.GetPreferredSize(Size.Empty).Width - 16);
+                bar.MaximumSize = new Size(Math.Max(120, owner.ClientSize.Width), 0);
+            }
+            finally { fittingSearch = false; }
+        }
+        owner.ClientSizeChanged += (_, _) => FitSearch();
+        openSearch.FontChanged += (_, _) => FitSearch();
+        input.VisibleChanged += (_, _) => FitSearch();
+        breadcrumb.TextChanged += (_, _) => FitSearch();
+        openSearch.TextChanged += (_, _) => FitSearch();
+        FitSearch();
         var highlight = new System.Windows.Forms.Timer { Interval = 1400 };
         Control? highlighted = null;
         Color original = Color.Empty;
@@ -349,6 +374,8 @@ internal sealed partial class MainForm
         {
             if (results.SelectedItem is not SettingsMatch match) return;
             tabs.SelectedTab = match.Page;
+            for (var parent = match.Control.Parent; parent is not null && parent != match.Page; parent = parent.Parent)
+                if (parent.Tag is Action expand) expand();
             match.Page.ScrollControlIntoView(match.Control);
             match.Control.Focus();
             ResetHighlight();

@@ -21,6 +21,8 @@ internal static class Countries
         ["UA"] = ("Ucrania", "Ukraine"), ["XK"] = ("Kosovo", "Kosovo")
     };
 
+    internal static IEnumerable<string> Codes => Names.Keys;
+
     public static string? Normalize(string? code)
     {
         var value = code?.Trim().ToUpperInvariant();

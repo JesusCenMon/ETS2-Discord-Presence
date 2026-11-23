@@ -108,7 +108,7 @@ internal sealed partial class MainForm
 
     private void ScaleText(Control control)
     {
-        if (control is Label or Button or CheckBox or TextBox or ListBox or DataGridView or ComboBox or TabControl or DateTimePicker or TripMap)
+        if (control is Label or Button or CheckBox or TextBox or ListBox or DataGridView or ComboBox or TabControl or DateTimePicker or TripMap or SpeedChart)
         {
             var baseline = textSizes.GetValue(control, child =>
             {
@@ -117,8 +117,8 @@ internal sealed partial class MainForm
                 return state;
             });
             var percent = control is DataGridView or ListBox
-                ? Math.Clamp(preferences.Features.TableTextPercent, 100, 150)
-                : Math.Clamp(preferences.TextPercent, 85, 150);
+                ? Math.Clamp(preferences.Features.TableTextPercent, 100, 200)
+                : Math.Clamp(preferences.TextPercent, 85, 200);
             var original = control == cargo && fullScreen ? 34 : control == distance && fullScreen ? 42 : baseline.Baseline.SizeInPoints;
             var target = original * percent / 100;
             if (Math.Abs(control.Font.SizeInPoints - target) > .02f)
@@ -392,6 +392,8 @@ internal sealed partial class MainForm
     private void RenderTools(TelemetrySnapshot? trip, TelemetrySnapshot? live, bool discordConnected, bool sharing)
     {
         liveDelivery = live?.OnJob == true;
+        if (Visible && tripShellPage.Visible && !UiBusy)
+        {
         var truck = trip?.Truck;
         var brand = truck?.Brand ?? "";
         var model = truck?.Model ?? "";
@@ -408,6 +410,7 @@ internal sealed partial class MainForm
         fuelLevel.AccessibleName = L($"Combustible {fuel}", $"Fuel {fuel}");
         truckStats.Text = $"{L("Odómetro", "Odometer")}  {odo}   ·   {L("Combustible", "Fuel")}  {fuel}"
             + (truck?.RangeKm is > 0 and < 20_000 ? $"\n{L("Autonomía estimada", "Estimated fuel range")}  {AppOptions.Distance(truck.RangeKm.Value, preferences.Features.Miles)}" : "");
+        }
         var liveFuel = live?.Truck?.FuelPercent;
         var liveTruck = live?.Truck is { } current ? $"{current.Brand}|{current.Model}" : null;
         if (liveTruck is not null && liveTruck != fuelTruck) { fuelTruck = liveTruck; fuelAlerted = false; }

@@ -2,7 +2,35 @@
 
 [English changelog](../CHANGELOG.md) · [Volver a la guía](README.es.md)
 
-## Última versión · v0.8.8
+## Última versión · v0.9.1
+
+- Inicio más claro, aviso explícito de ejemplo/repetición y barra inferior sin duplicación en Inicio/Viaje.
+- Protección de cambios sin guardar al navegar o salir: seguir editando, descartar o guardar y continuar al destino solicitado.
+- Deshacer por apartado, contador de cambios, indicación de reinicio y errores de guardado dentro de Ajustes.
+- Opciones avanzadas plegadas que la búsqueda puede abrir automáticamente.
+- Detalle del Diario junto a la lista, selección más clara y textos completos disponibles.
+- Controles de repetición fijos y estados de reproducción, pausa y finalización diferenciados.
+- Dibujo agrupado, superficies con doble búfer, conservación del desplazamiento y actualización visual aplazada durante la interacción.
+- Ajustes adaptables a ventana estrecha y texto al 200 %, datos antiguos señalados y restauración de ventana maximizada.
+- Incluye la base de rendimiento y diagnóstico de v0.9.0 que todavía no se había publicado.
+
+[Detalle de los 50 puntos](QUALITY-0.9.1.md). El reconocimiento en una partida real y los monitores con DPI distintos requieren validación manual.
+
+## v0.9.0
+
+- Medición local de navegación y bloqueos, con informe que se revisa antes de guardar. No se envía automáticamente y no incluye jugadores, rutas, coordenadas ni capturas.
+- Precarga limitada de grabaciones durante la inactividad, consultas del Diario y gráficos en segundo plano con cancelación.
+- Filtros, orden, selección y posición de Diario/Repeticiones conservados entre aperturas.
+- Menos dibujo de secciones ocultas, caché de imágenes limitada por memoria y mantenimiento de archivos fuera de la interfaz.
+- Ayuda integrada: conexión, último intento del detector, mediciones, portadas por país/vehículo y actualizaciones.
+- Confirmación de lecturas del detector, vencimiento de resultados antiguos y reconocimiento visual del modo foto sin depender siempre del texto.
+- Portada genérica de respaldo si falla la del país, con comprobaciones y reintentos limitados.
+- Texto hasta el 200 %, espacios y títulos coherentes, y acciones útiles en pantallas vacías.
+- Actualización verificada y recuperación de la versión anterior accesibles desde Ajustes y Ayuda.
+
+Consulta la [lista de implementación y verificación](QUALITY-0.9.0.md). Sigue pendiente validar el detector en una partida real y los cambios entre monitores con distintas escalas.
+
+## v0.8.8
 
 - Corrige las pausas restantes al abrir Ajustes y cambiar de pestaña.
 - Agrupa la distribución y el dibujo de los controles, y prepara los estilos antes de crear sus ventanas nativas.

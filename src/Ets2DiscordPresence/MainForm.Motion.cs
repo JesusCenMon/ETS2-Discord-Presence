@@ -5,7 +5,7 @@ internal sealed partial class MainForm
     private UiMotion? motion;
     private UiMotion Motion => motion ??= new UiMotion(() => CanAnimate);
     private bool CanAnimate => Visible && WindowState != FormWindowState.Minimized && !preferences.Features.ReduceMotion
-        && !SystemInformation.HighContrast && SystemInformation.IsMenuAnimationEnabled;
+        && !SystemInformation.HighContrast && SystemInformation.IsMenuAnimationEnabled && UiMotion.SystemAnimationsEnabled;
 
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Label, TextInk> animatedInk = new();
     private sealed record TextInk(Color Resting);

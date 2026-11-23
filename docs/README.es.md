@@ -57,7 +57,7 @@ En **Ajustes → Datos locales** puedes crear o restaurar una copia de los diari
 
 La pausa se guarda y también se controla desde la bandeja de Windows. «Ver viaje rápido» muestra el destino, la distancia y el estado de Discord. En **Ajustes → Privacidad** puedes elegir un atajo que oculta temporalmente la ruta y la ciudad en Discord. En **Más opciones → Tarjeta OBS** se abre una ventana independiente con la ruta y distancia. Puedes capturar esa ventana en OBS y aplicar un filtro de clave de color magenta si el método de captura muestra el borde transparente como un color sólido. El inicio minimizado con Windows es opcional. Si mueves el ejecutable, desactiva y vuelve a activar esa opción desde su nueva ubicación.
 
-Al abrir la app se comprueba si hay una versión más reciente en GitHub. Las versiones de prueba aparecen con el canal Preview. Cuando hay una actualización, aparece en **Más opciones**. Si la versión trae una suma de verificación, puedes descargarla e instalarla desde la app. La versión anterior queda disponible en el mismo menú si el ejecutable está en una carpeta donde puedes escribir.
+Al abrir la app se comprueba si hay una versión más reciente en GitHub. Las versiones de prueba aparecen con el canal Preview. También puedes buscar e instalar actualizaciones desde **Ajustes → Juego** o **Ayuda**. Cuando hay una actualización, aparece además en **Más opciones**. Si la versión trae una suma de verificación, puedes descargarla e instalarla desde la app. La versión anterior queda disponible en el mismo menú si el ejecutable está en una carpeta donde puedes escribir.
 
 La actividad aparece como **Euro Truck Simulator 2** en Discord. La actividad usa una sola portada, con la bandera del país cuando está disponible y se permite compartirla. El temporizador cuenta desde que se detecta la actividad. Ambos se pueden desactivar desde **Ajustes → Discord**. El título oficial detectado automáticamente por Discord puede coexistir con esta actividad según la configuración del cliente.
 
@@ -71,7 +71,7 @@ La actividad aparece como **Euro Truck Simulator 2** en Discord. La actividad us
 
 ## Novedades
 
-La v0.8.8 corrige pausas adicionales al cargar pestañas y agiliza la navegación, conserva las páginas de Diario y Repeticiones e integra Ajustes en la ventana principal. Añade lectura de grabaciones en segundo plano, mejoras de texto ampliado y menos trabajo de dibujo en mapas y gráficos. Consulta el [historial completo](CHANGELOG.es.md).
+La v0.9.1 incorpora mediciones de rendimiento, cargas del Diario y gráficos en segundo plano, conservación de filtros entre aperturas, texto hasta el 200 % y Ayuda dentro de la ventana principal. En **Ayuda** puedes consultar el detector, probar portadas y revisar un informe antes de guardarlo. Consulta el [historial completo](CHANGELOG.es.md) y los [50 refinamientos visuales](QUALITY-0.9.1.md) y la [base de rendimiento](QUALITY-0.9.0.md).
 
 ## Desarrollo
 

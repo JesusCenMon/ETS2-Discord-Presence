@@ -63,7 +63,8 @@ internal sealed partial class MainForm
             var title = new Rectangle(24, top + size + 12, width, Font.Height * 2 + 8);
             TextRenderer.DrawText(e.Graphics, AccessibleName, Font, title, ForeColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
-            var detail = new Rectangle(24, title.Bottom, width, Math.Max(1, Height - title.Bottom - 16));
+            var footer = Controls.Cast<Control>().Where(control => control.Dock == DockStyle.Bottom).Sum(control => control.Height);
+            var detail = new Rectangle(24, title.Bottom, width, Math.Max(1, Height - title.Bottom - footer - 16));
             TextRenderer.DrawText(e.Graphics, AccessibleDescription, Font, detail, ForeColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
         }

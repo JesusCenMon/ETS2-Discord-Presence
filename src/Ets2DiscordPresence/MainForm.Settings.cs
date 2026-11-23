@@ -35,8 +35,9 @@ internal sealed partial class MainForm
         window.Size = pageHost.ClientSize;
         window.SuspendLayout();
         root.Controls.Add(window);
-        var tabs = new SettingsPages { Dock = DockStyle.Fill };
+        var tabs = new SettingsPages { Dock = DockStyle.Fill, Measure = MeasureNavigation };
         var footer = DialogFooter();
+        var settingsInlineError = TextLabel("", 10, true);
         var apply = MakeButton(L("Guardar cambios", "Save changes"));
         apply.Tag = "primary";
         var cancel = MakeButton(L("Cancelar", "Cancel"));
@@ -46,7 +47,10 @@ internal sealed partial class MainForm
         cancel.Click += (_, _) =>
         {
             root.Context = "";
-            Navigate(settingsReturnPage);
+            afterSettingsSave = null;
+            bypassSettingsGuard = true;
+            try { Navigate(settingsReturnPage); }
+            finally { bypassSettingsGuard = false; }
         };
         footer.Controls.AddRange([apply, cancel, restart]);
         window.Controls.Add(tabs);
@@ -62,6 +66,7 @@ internal sealed partial class MainForm
         var style = AddTab(tabs, L("Apariencia", "Appearance"));
         var updateChannel = Choice(game, L("Canal de actualizaciones", "Update channel"),
             ["Stable", "Preview"], preferences.PreviewUpdates ? 1 : 0);
+        AddUpdateControls(game);
         AddRows(game, TextLabel(L("Stable recibe versiones finales. Preview también recibe versiones de prueba.", "Stable receives final releases. Preview also receives test releases."), 9));
         var data = AddTab(tabs, L("Datos locales", "Local data"));
         var lastBackup = LastBackup()?.LocalDateTime.ToString("g") ?? L("Nunca", "Never");
@@ -70,7 +75,7 @@ internal sealed partial class MainForm
             AddRows(data, TextLabel(L("Ya tienes 20 viajes o más. Guarda una copia del diario.", "You have 20 or more trips. Save a backup of your journal."), 10, true));
         AddAction(data, L("Ver almacenamiento…", "View storage…"), () => ShowStorage(window));
         AddAction(data, L("Inspeccionar copia…", "Inspect backup…"), () => InspectBackup(window));
-        int[] textSizes = [85, 100, 115, 135, 150];
+        int[] textSizes = [85, 100, 115, 135, 150, 175, 200];
         var getFeatures = BuildFeatureSettings(window, tabs, style, discordTab, privacy, game, data);
         AddSettingsSearch(window, tabs);
         var textSizeTitle = L("Tamaño del texto", "Text size");
@@ -449,6 +454,7 @@ internal sealed partial class MainForm
         if (setupError is { Length: > 0 } currentError)
             AddRows(game, TextLabel(currentError, 10));
         AddAction(game, L("Copiar diagnóstico", "Copy diagnostics"), CopyDiagnostics);
+        AddAction(game, L("Rendimiento y detección de pantallas…", "Performance and screen detection…"), ShowConnectionGuide);
         AddAction(game, L("Licencias", "Licenses"), ShowLicenses);
         AddAction(game, L("Versión y compatibilidad del lector…", "Reader version and compatibility…"), () => ShowReader(window));
         AddAction(game, L("¿Qué hace esto? · Lector y versiones", "What does this do? · Reader and versions"), () =>
@@ -463,7 +469,11 @@ internal sealed partial class MainForm
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
             {
-                MessageBox.Show(window, L("Windows no permitió cambiar el inicio automático.", "Windows did not allow changing startup."), Text);
+                settingsInlineError.Text = L("No se pudo cambiar el inicio automático. Revisa la opción o vuelve a intentarlo.", "Could not change startup. Review the option or try again.");
+                settingsInlineError.Visible = true;
+                tabs.SelectedTab = (Panel)game.Parent!;
+                ((ScrollableControl)game.Parent!).ScrollControlIntoView(startup);
+                startup.Focus();
                 return;
             }
             var compactChanged = preferences.Compact != compact.Checked;
@@ -493,24 +503,37 @@ internal sealed partial class MainForm
             });
             if (settingsError is not null)
             {
-                MessageBox.Show(window, settingsError, Text);
+                settingsInlineError.Text = settingsError + L(" Vuelve a intentarlo; tus cambios siguen aquí.", " Try again; your edits are still here.");
+                settingsInlineError.Visible = true;
                 return;
             }
             LoadCatalog();
             ResetLocation(IsGameRunning());
             ApplyLanguage();
             RegisterPrivacyShortcut();
-            if ((preferences.PrivacyShortcut > 0 && !hotkeyRegistered) || (preferences.Features.PauseShortcut && !pauseHotkeyRegistered))
-                MessageBox.Show(window, L("Windows no pudo registrar el atajo. Prueba otra combinación.", "Windows could not register the shortcut. Try another combination."), Text);
+            var shortcutUnavailable = (preferences.PrivacyShortcut > 0 && !hotkeyRegistered) || (preferences.Features.PauseShortcut && !pauseHotkeyRegistered);
+            if (shortcutUnavailable)
+                ShowStatusToast(L("No se pudo activar el atajo. Elige otra combinación en Privacidad.", "Could not enable the shortcut. Choose another combination in Privacy."));
             ScaleText(this);
             ResizeShell();
             if (compactChanged && !fullScreen) ApplyCompactSize();
             ConfigurePanels();
             RefreshPresence();
             root.Context = "";
-            Navigate(settingsReturnPage);
-            ShowStatusToast(L("Ajustes guardados", "Settings saved"));
+            var next = afterSettingsSave;
+            afterSettingsSave = null;
+            bypassSettingsGuard = true;
+            try { if (next is not null) next(); else Navigate(settingsReturnPage); }
+            finally { bypassSettingsGuard = false; }
+            ShowStatusToast(shortcutUnavailable
+                ? L("Ajustes guardados. El atajo está ocupado; elige otro en Privacidad.", "Settings saved. The shortcut is busy; choose another in Privacy.")
+                : L("Ajustes guardados", "Settings saved"));
         };
+        AdvancedSettings(game, [L("Retirar lector", "Remove reader"), L("Licencias", "Licenses"),
+            L("Versión y compatibilidad del lector…", "Reader version and compatibility…"),
+            L("¿Qué hace esto? · Lector y versiones", "What does this do? · Reader and versions")]);
+        AdvancedSettings(data, [L("Inspeccionar copia…", "Inspect backup…"),
+            L("¿Qué hace esto? · Portátil y restauración", "What does this do? · Portable and restore")]);
         settingsNavigation = tabs;
         settingsSections.Clear();
         settingsSections["display"] = (Panel)style.Parent!;
@@ -522,6 +545,8 @@ internal sealed partial class MainForm
         tabs.PerformLayout();
         if (settingsSections.TryGetValue(settingsInitialSection, out var initial)) tabs.SelectedTab = initial;
         tabs.BuildNavigation(shellPalette, () => Motion);
+        StyleTool(window);
+        ConfigureSettingsEditor(root, window, tabs, footer, apply, cancel, textSize, theme, accent, settingsInlineError);
         StyleTool(window);
         construction.Dispose();
         window.ResumeLayout(true);

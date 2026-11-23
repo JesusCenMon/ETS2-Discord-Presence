@@ -16,13 +16,15 @@ internal static class GameScreenReader
     internal enum ScanStatus { GameNotInForeground, CaptureUnavailable, NoMatch, Recognized }
     internal readonly record struct Scan(GameScreen? Screen, ScanStatus Status);
 
-    public static async Task<Scan> ReadAsync()
+    public static async Task<Scan> ReadAsync(CancellationToken cancellation = default)
     {
         try
         {
-            var capture = await Task.Run(CaptureGame);
+            var capture = await Task.Run(CaptureGame, cancellation).ConfigureAwait(false);
             if (capture.Bytes is null) return new(null, capture.Status);
-            var screen = await RecognizeAsync(capture.Bytes);
+            cancellation.ThrowIfCancellationRequested();
+            var screen = await RecognizeAsync(capture.Bytes).ConfigureAwait(false);
+            cancellation.ThrowIfCancellationRequested();
             return GetForegroundWindow() != capture.Window ? new(null, ScanStatus.GameNotInForeground)
                 : new(screen, screen.HasValue ? ScanStatus.Recognized : ScanStatus.NoMatch);
         }
@@ -35,7 +37,11 @@ internal static class GameScreenReader
 
     internal static async Task<GameScreen?> RecognizeAsync(byte[] bytes)
     {
-        var engine = OcrEngine.TryCreateFromUserProfileLanguages();
+        using var source = new MemoryStream(bytes);
+        using var image = new Bitmap(source);
+        if (HasPhotoReticle(image)) return GameScreen.Photo;
+        var engine = OcrEngine.TryCreateFromUserProfileLanguages()
+            ?? OcrEngine.AvailableRecognizerLanguages.Select(OcrEngine.TryCreateFromLanguage).FirstOrDefault(value => value is not null);
         if (engine is null) return null;
         using var input = new InMemoryRandomAccessStream();
         using (var writer = new DataWriter(input.GetOutputStreamAt(0)))
@@ -48,12 +54,9 @@ internal static class GameScreenReader
         var full = await engine.RecognizeAsync(bitmap);
         if (Classify(full.Text) is { } recognized) return recognized;
 
-        using var source = new MemoryStream(bytes);
-        using var image = new Bitmap(source);
         var mapHeader = new Rectangle(0, 0, image.Width / 2, Math.Max(1, image.Height / 7));
         var photoControls = new Rectangle(image.Width * 4 / 5, image.Height / 2,
             image.Width - image.Width * 4 / 5, image.Height - image.Height / 2);
-        if (HasPhotoReticle(image)) return GameScreen.Photo;
         var heading = await ReadRegionAsync(engine, image, mapHeader);
         if (Classify(heading) == GameScreen.Map) return GameScreen.Map;
         var controls = await ReadRegionAsync(engine, image, photoControls);

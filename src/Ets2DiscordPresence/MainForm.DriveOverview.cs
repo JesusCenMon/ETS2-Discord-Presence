@@ -101,6 +101,7 @@ internal sealed partial class MainForm
         displayedDrive = trip;
         driveConnected = connected;
         driveSharing = sharing;
+        if (!Visible || UiBusy) return;
         var remaining = trip?.RemainingKm is { } km ? AppOptions.Distance(km, preferences.Features.Miles) : null;
         if (homePage.Visible || tripShellPage.Visible) UpdateDriveOverview(trip, remaining);
         var discord = !connected ? L("○ Discord desconectado", "○ Discord offline")
@@ -108,18 +109,27 @@ internal sealed partial class MainForm
         foreach (var strip in new[] { currentTripBar })
         {
             if (strip is null || strip.IsDisposed) continue;
-            strip.Visible = trip is not null;
+            strip.Visible = trip is not null && currentPage is not ("home" or "trip")
+                && !(currentPage == "settings" && ClientSize.Height / (DeviceDpi / 96f) < 620);
             if (trip is null) continue;
             var title = DriveTitle(trip);
             strip.Open.Text = title;
             strip.Open.AccessibleName = L($"Abrir viaje · {title}", $"Open trip · {title}");
             strip.Metadata.Text = string.Join("   ·   ", new[] { trip.Cargo, remaining, discord }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            FullStripHint(strip, title);
+            strip.Metadata.Visible = !(ClientSize.Height / (DeviceDpi / 96f) < 620 && preferences.TextPercent > 135);
             strip.Metadata.ForeColor = connected && sharing ? shellPalette.Discord : shellPalette.Muted;
             strip.Progress.Palette = shellPalette;
             strip.Progress.SetValue(trip.Progress ?? 0, Motion);
             strip.Progress.Visible = trip.Progress.HasValue;
             strip.Progress.AccessibleName = L($"Avance {trip.Progress} por ciento", $"Progress {trip.Progress} percent");
         }
+    }
+
+    private void FullStripHint(TripStrip strip, string title)
+    {
+        shellTips.SetToolTip(strip.Open, title);
+        shellTips.SetToolTip(strip.Metadata, strip.Metadata.Text);
     }
 
     private sealed class TripStrip : TableLayoutPanel
@@ -147,6 +157,15 @@ internal sealed partial class MainForm
             Metadata.Height = 25;
             Metadata.AutoEllipsis = true;
             AddRows(this, Open, Metadata, Progress);
+            void FitText()
+            {
+                Open.Height = Math.Max(38 * DeviceDpi / 96, Open.Font.Height + Open.Padding.Vertical + 12);
+                Metadata.Height = Metadata.Font.Height + 8;
+            }
+            Open.FontChanged += (_, _) => FitText();
+            Metadata.FontChanged += (_, _) => FitText();
+            DpiChangedAfterParent += (_, _) => FitText();
+            FitText();
         }
     }
 }

@@ -10,8 +10,10 @@ internal sealed partial class MainForm
     private long selectedScreenUntil;
     private bool lastVehicleWasCoach;
     private GameScreen? recognizedScreen;
-    private GameScreen? screenCandidate;
-    private int candidateSamples;
+    private readonly ScreenStability screenStability = new();
+    private DateTimeOffset? lastScreenScanAt;
+    private double lastScreenScanMs;
+    private CancellationTokenSource? screenCancellation;
     private long nextScreenScan;
     private GameScreenReader.ScanStatus? lastScreenScan;
     private bool screenScanPending;
@@ -70,7 +72,7 @@ internal sealed partial class MainForm
             || !preferences.Sharing || privateForSession || privateUntil > DateTimeOffset.UtcNow
             || demo || replayOpen || demoScenario is not null)
             ResetScreenRecognition();
-        else if (selectedGameScreen is null && !screenScanPending && now >= nextScreenScan && GameScreenReader.HasRecognitionLanguage)
+        else if (selectedGameScreen is null && !screenScanPending && now >= nextScreenScan)
         {
             nextScreenScan = now + 1000;
             _ = ReadGameScreenAsync(screenScanGeneration);
@@ -91,8 +93,9 @@ internal sealed partial class MainForm
     private void ResetScreenRecognition()
     {
         screenScanGeneration++;
-        recognizedScreen = screenCandidate = null;
-        candidateSamples = 0;
+        recognizedScreen = null;
+        screenStability.Reset();
+        screenCancellation?.Cancel();
         lastGameScreenMatch = 0;
     }
 
@@ -101,26 +104,33 @@ internal sealed partial class MainForm
         screenScanPending = true;
         try
         {
-            var result = await GameScreenReader.ReadAsync();
-            if (IsDisposed || generation != screenScanGeneration) return;
-            lastScreenScan = result.Status;
-            var detected = result.Screen;
-            var previousScreen = recognizedScreen;
-            if (detected.HasValue) lastGameScreenMatch = Environment.TickCount64;
-            candidateSamples = detected == screenCandidate ? Math.Min(2, candidateSamples + 1) : 1;
-            screenCandidate = detected;
-            // Positive matches include multiple screen-specific labels. Losing a match
-            // twice prevents a transient overlay from interrupting the activity.
-            if (result.Status != GameScreenReader.ScanStatus.GameNotInForeground
-                && (detected.HasValue || candidateSamples >= 2 || liveSnapshot?.Paused == false))
-                recognizedScreen = detected;
-            if (previousScreen != recognizedScreen)
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            screenCancellation = cancel;
+            for (var pass = 0; pass < 2; pass++)
             {
-                publishImmediately = true;
-                BeginInvoke(RefreshPresence);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var result = await GameScreenReader.ReadAsync(cancel.Token);
+                if (IsDisposed || cancel.IsCancellationRequested || generation != screenScanGeneration) return;
+                lastScreenScanAt = DateTimeOffset.Now;
+                lastScreenScanMs = clock.Elapsed.TotalMilliseconds;
+                lastScreenScan = result.Status;
+                var previousScreen = recognizedScreen;
+                recognizedScreen = screenStability.Observe(result, Environment.TickCount64);
+                if (recognizedScreen.HasValue) lastGameScreenMatch = Environment.TickCount64;
+                nextScreenScan = Environment.TickCount64 + (result.Status == GameScreenReader.ScanStatus.GameNotInForeground ? 3500 : 1000);
+                if (previousScreen != recognizedScreen)
+                {
+                    publishImmediately = true;
+                    BeginInvoke(RefreshPresence);
+                }
+                // Confirm a positive candidate promptly instead of waiting for the next telemetry tick.
+                if (pass == 0 && result.Screen.HasValue && recognizedScreen != result.Screen)
+                    await Task.Delay(350, cancel.Token);
+                else break;
             }
         }
-        finally { screenScanPending = false; }
+        catch (OperationCanceledException) { }
+        finally { screenScanPending = false; screenCancellation = null; }
     }
 
     private void WatchGamePhotos()
@@ -147,12 +157,24 @@ internal sealed partial class MainForm
             Interlocked.Exchange(ref photoTakenAt, Environment.TickCount64);
     }
 
-    private string ScreenDiagnostic() => !GameScreenReader.HasRecognitionLanguage
-        ? L("Windows no tiene un idioma de reconocimiento instalado.", "Windows has no recognition language installed.")
+    private string ScreenDiagnostic() => selectedGameScreen is { } manual
+        ? L("Actividad elegida manualmente: ", "Manually selected activity: ") + PresenceFormatter.ScreenTitle(manual, lastVehicleWasCoach, English)
+        : demo || demoScenario is not null || replayOpen
+        ? L("La detección está detenida durante ejemplos y repeticiones locales.", "Detection is stopped during local demos and replays.")
+        : !(preferences.Features.RecognizeMap ?? preferences.Features.RecognizeGameScreens)
+        && !(preferences.Features.RecognizePhoto ?? preferences.Features.RecognizeGameScreens)
+        ? L("Detección desactivada en Ajustes.", "Detection disabled in Settings.")
+        : !preferences.Sharing || privateForSession || privateUntil > DateTimeOffset.UtcNow
+        ? L("Detección detenida mientras la publicación está pausada u oculta.", "Detection stopped while sharing is paused or hidden.")
+        : !gameRunning ? L("Abre ETS2 para comprobar el detector.", "Launch ETS2 to check the detector.")
+        : !GameScreenReader.HasRecognitionLanguage
+        ? L("Windows no tiene reconocimiento de texto disponible. El modo foto aún puede reconocerse por sus controles visuales.", "Windows has no text recognition language. Photo mode can still be recognized by its visual controls.")
         : lastScreenScan switch
         {
-            GameScreenReader.ScanStatus.Recognized => L("Pantalla de ETS2 reconocida.", "ETS2 screen recognized."),
-            GameScreenReader.ScanStatus.NoMatch => L("Ventana leída. No se reconoció mapa ni modo foto.", "Window read. Map or photo mode was not recognized."),
+            GameScreenReader.ScanStatus.Recognized => recognizedScreen is { } screen
+                ? PresenceFormatter.ScreenTitle(screen, lastVehicleWasCoach, English)
+                : L("Confirmando la pantalla. Mantén el mapa o el modo foto abierto un momento.", "Confirming the screen. Keep map or photo mode open briefly."),
+            GameScreenReader.ScanStatus.NoMatch => L("Ventana leída sin coincidencias. Mantén visibles el encabezado del mapa o los controles del modo foto.", "Window read without a match. Keep the map header or photo-mode controls visible."),
             GameScreenReader.ScanStatus.CaptureUnavailable => L("No se pudo leer la imagen de ETS2. Prueba el modo ventana sin bordes.", "Could not read the ETS2 image. Try borderless windowed mode."),
             _ => L("Pon ETS2 en primer plano para iniciar la detección.", "Bring ETS2 to the foreground to start detection.")
         };

@@ -184,30 +184,39 @@ internal sealed partial class MainForm
         if (recordingFrames > frames) ShowStatusToast(L("Marcador añadido", "Marker added"));
     }
 
-    private void RunScheduledBackup()
+    private bool backupPending;
+
+    private async void RunScheduledBackup()
     {
         var folder = preferences.Features.BackupFolder;
-        if (string.IsNullOrWhiteSpace(folder) || Environment.TickCount64 < nextBackupCheck) return;
+        if (backupPending || string.IsNullOrWhiteSpace(folder) || Environment.TickCount64 < nextBackupCheck) return;
         nextBackupCheck = Environment.TickCount64 + 60_000;
+        backupPending = true;
+        var interval = Math.Clamp(preferences.Features.BackupIntervalDays, 1, 30);
+        var keep = Math.Clamp(preferences.Features.BackupKeep, 5, 20);
         try
         {
             if (!Path.IsPathFullyQualified(folder)) return;
-            var interval = Math.Clamp(preferences.Features.BackupIntervalDays, 1, 30);
-            var existing = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "ETS2-automatico*.ets2backup")
-                .Where(path => Path.GetFileName(path) == "ETS2-automatico.ets2backup" ||
-                    System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), @"^ETS2-automatico-\d{8}-\d{6}\.ets2backup$"))
-                .OrderByDescending(File.GetLastWriteTimeUtc).ToArray() : [];
-            if (existing.Length > 0 && File.GetLastWriteTimeUtc(existing[0]) > DateTime.UtcNow.AddDays(-interval)) return;
+            // Flush on the owning thread, then scan/copy immutable files on the worker.
             journal.Flush();
             if (journal.Error is not null) return;
-            var path = Path.Combine(folder, $"ETS2-automatico-{DateTime.UtcNow:yyyyMMdd-HHmmss}.ets2backup");
-            SaveBackup(path);
-            foreach (var old in existing.Skip(Math.Clamp(preferences.Features.BackupKeep, 5, 20) - 1))
-                File.Delete(old);
+            await Task.Run(() =>
+            {
+                var existing = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "ETS2-automatico*.ets2backup")
+                    .Where(path => Path.GetFileName(path) == "ETS2-automatico.ets2backup" ||
+                        System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), @"^ETS2-automatico-\d{8}-\d{6}\.ets2backup$"))
+                    .OrderByDescending(File.GetLastWriteTimeUtc).ToArray() : [];
+                if (existing.Length > 0 && File.GetLastWriteTimeUtc(existing[0]) > DateTime.UtcNow.AddDays(-interval)) return;
+                var path = Path.Combine(folder, $"ETS2-automatico-{DateTime.UtcNow:yyyyMMdd-HHmmss}.ets2backup");
+                SaveBackup(path);
+                foreach (var old in existing.Skip(keep - 1))
+                    File.Delete(old);
+            });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException)
         {
-            settingsError = L("La copia automática no pudo guardarse.", "The automatic backup could not be saved.");
+            if (!IsDisposed) settingsError = L("La copia automática no pudo guardarse.", "The automatic backup could not be saved.");
         }
+        finally { backupPending = false; }
     }
 }

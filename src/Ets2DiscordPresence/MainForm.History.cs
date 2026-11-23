@@ -8,6 +8,11 @@ internal sealed partial class MainForm
     private void ShowHistory()
     {
         var window = new LibraryPage(L("Diario", "Journal"));
+        var stateKey = "journal-" + preferences.DriverProfile;
+        var savedView = viewState.Get<JournalViewState>(stateKey) ?? new();
+        savedView = savedView with { Search = savedView.Search ?? "", Sort = savedView.Sort ?? "date" };
+        lastJournalTrip = savedView.Selected;
+        lastJournalScroll = Math.Max(0, savedView.Scroll);
         var header = Grid(1);
         header.Padding = new Padding(16, 12, 16, 8);
         var filters = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true };
@@ -95,7 +100,7 @@ internal sealed partial class MainForm
             if (filters.Visible) from.Focus();
         };
         var title = ToolBar();
-        title.Controls.AddRange([TextLabel(L("Diario", "Journal"), 23, true), resultCount]);
+        title.Controls.AddRange([TextLabel(L("Diario", "Journal"), 20, true), resultCount]);
         AddRows(header, title, tools, searchBar, filters, activeFilters, stats);
 
         var history = new JournalGrid
@@ -118,10 +123,11 @@ internal sealed partial class MainForm
         history.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         history.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
         history.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-        history.DefaultCellStyle.Padding = new Padding(6, 6, 6, 6);
+        history.DefaultCellStyle.Padding = new Padding(8);
         history.DefaultCellStyle.BackColor = shellPalette.Surface;
         history.DefaultCellStyle.ForeColor = Foreground;
-        history.DefaultCellStyle.SelectionBackColor = shellPalette.Hover;
+        history.DefaultCellStyle.SelectionBackColor = SystemInformation.HighContrast ? SystemColors.Highlight
+            : UiMotion.Blend(shellPalette.Surface, shellPalette.Accent, .18);
         history.DefaultCellStyle.SelectionForeColor = shellPalette.Text;
         history.GridColor = shellPalette.Border;
         history.AlternatingRowsDefaultCellStyle.BackColor = SystemInformation.HighContrast
@@ -148,6 +154,17 @@ internal sealed partial class MainForm
         var entries = Array.Empty<TripEntry>();
         TripEntry? EntryAt(int index) => index >= 0 && index < entries.Length ? entries[index] : null;
         history.VirtualMode = true;
+        history.AccessibleName = L("Viajes del diario", "Journal trips");
+        history.ShowCellToolTips = true;
+        history.CellToolTipTextNeeded += (_, args) =>
+        {
+            if (args.RowIndex >= 0 && args.ColumnIndex >= 0 && EntryAt(args.RowIndex) is { } entry)
+                args.ToolTipText = history.Columns[args.ColumnIndex].Name switch
+                {
+                    "origin" => entry.Origin, "destination" => entry.Destination,
+                    "cargo" => JourneyLabel(entry), "result" => ResultIcon(entry), _ => ""
+                };
+        };
         history.CellValueNeeded += (_, e) =>
         {
             if (EntryAt(e.RowIndex) is not { } entry) return;
@@ -182,7 +199,7 @@ internal sealed partial class MainForm
                 if (sortColumn == "date" && e.RowIndex > 0 && EntryAt(e.RowIndex - 1) is { } previous
                     && previous.Finished?.LocalDateTime.Date != entry.Finished?.LocalDateTime.Date)
                 {
-                    using var divider = new Pen(shellPalette.Border, 2);
+                    using var divider = new Pen(shellPalette.Border, 1);
                     e.Graphics.DrawLine(divider, bounds.Left, bounds.Top, bounds.Right, bounds.Top);
                 }
             }
@@ -192,7 +209,20 @@ internal sealed partial class MainForm
                 e.Graphics.DrawRectangle(stroke, Rectangle.Inflate(bounds, -1, -1));
             }
         };
-        var descending = true;
+        var descending = savedView.Descending;
+        sortColumn = new[] { "date", "origin", "destination", "cargo", "result", "km", "time", "revenue" }.Contains(savedView.Sort) ? savedView.Sort : "date";
+        cityFilter.Text = savedView.Search.Length <= 256 ? savedView.Search : "";
+        favorites.Checked = savedView.Favorites;
+        if (savedView.From is { } start && start >= from.MinDate && start <= from.MaxDate) { from.Value = start; from.Checked = true; }
+        if (savedView.To is { } end && end >= to.MinDate && end <= to.MaxDate) { to.Value = end; to.Checked = true; }
+        resultFilter.SelectedIndex = Math.Clamp(savedView.Result, 0, resultFilter.Items.Count - 1);
+        distanceFilter.SelectedIndex = Math.Clamp(savedView.Range, 0, distanceFilter.Items.Count - 1);
+        filters.Visible = savedView.Filters;
+        toggleFilters.Text = filters.Visible ? L("Ocultar filtros", "Hide filters") : L("Filtros", "Filters");
+        int queryGeneration = 0;
+        int selectionGeneration = 0;
+        CancellationTokenSource? filterLoad = null;
+        string? pendingQuery = null;
         TripJournal? observedJournal = null;
         TripEntry[] observedEntries = [];
         string? lastQuery = null;
@@ -209,21 +239,35 @@ internal sealed partial class MainForm
                 box.SelectedIndex = selected is not null && box.Items.Contains(selected) ? box.Items.IndexOf(selected) : 0;
             }
         }
-        void RefreshHistory()
+        async void RefreshHistory()
         {
             if (refreshing || window.IsDisposed) return;
             var query = string.Join("|", cityFilter.Text, from.Checked, from.Value.Date, to.Checked, to.Value.Date,
                 favorites.Checked, resultFilter.SelectedIndex, truckFilter.Text, distanceFilter.SelectedIndex,
                 tagFilter.Text, sortColumn, descending);
             var sourceChanged = !ReferenceEquals(observedJournal, journal) || !observedEntries.SequenceEqual(journal.Entries);
-            if (!sourceChanged && lastQuery == query) return;
+            if (!sourceChanged && lastQuery == query || pendingQuery == query) return;
+            filterLoad?.Cancel();
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            filterLoad = cancellation;
+            var generation = ++queryGeneration;
+            pendingQuery = query;
             refreshing = true;
             try
             {
+                var selectionAtStart = selectionGeneration;
                 var selectedIds = Selection().Select(entry => entry.Id).ToHashSet();
                 var currentId = EntryAt(history.CurrentRow?.Index ?? -1)?.Id ?? lastJournalTrip;
                 var firstVisible = Math.Max(history.FirstDisplayedScrollingRowIndex, history.RowCount == 0 ? lastJournalScroll : 0);
-                if (sourceChanged) RefreshFilterOptions();
+                if (sourceChanged)
+                {
+                    RefreshFilterOptions();
+                    if (lastQuery is null)
+                    {
+                        if (savedView.Truck is { } truck && truckFilter.Items.Contains(truck)) truckFilter.SelectedItem = truck;
+                        if (savedView.Tag is { } tag && tagFilter.Items.Contains(tag)) tagFilter.SelectedItem = tag;
+                    }
+                }
                 var search = cityFilter.Text.Trim();
                 if (lastQuery != query)
                 {
@@ -247,25 +291,31 @@ internal sealed partial class MainForm
                     activeFilters.Visible = activeFilters.Controls.Count > 0;
                     activeFilters.ResumeLayout();
                 }
-                var matches = journal.Entries.Where(entry => entry.Finished is { } finish
-                    && (!from.Checked || finish.LocalDateTime.Date >= from.Value.Date)
-                    && (!to.Checked || finish.LocalDateTime.Date <= to.Value.Date)
-                    && (!favorites.Checked || entry.Favorite)
-                    && new[] { entry.Origin, entry.Destination, entry.Cargo, entry.Tags, entry.Notes }
-                        .Any(value => value?.Contains(search, StringComparison.CurrentCultureIgnoreCase) == true)
-                    && JournalQuery.Matches(entry, resultFilter.SelectedIndex, truckFilter.SelectedIndex > 0 ? truckFilter.Text : null,
-                        distanceFilter.SelectedIndex, preferences.Features.Miles, tagFilter.SelectedIndex > 0 ? tagFilter.Text : null));
+                var sourceJournal = journal;
+                var snapshot = journal.Entries.ToArray();
+                var requestFilter = new JournalQuery.Filter(search, from.Checked ? from.Value.Date : null,
+                    to.Checked ? to.Value.Date : null, favorites.Checked, resultFilter.SelectedIndex,
+                    truckFilter.SelectedIndex > 0 ? truckFilter.Text : null, distanceFilter.SelectedIndex,
+                    preferences.Features.Miles, tagFilter.SelectedIndex > 0 ? tagFilter.Text : null, sortColumn, descending);
+                JournalQuery.ResultSet result;
+                if (snapshot.Length > 1000)
+                {
+                    resultCount.Text = L("Buscando en el diario…", "Searching the journal…");
+                    refreshing = false;
+                    result = await Task.Run(() => JournalQuery.Execute(snapshot, requestFilter, cancellation.Token), cancellation.Token);
+                    if (window.IsDisposed || cancellation.IsCancellationRequested || generation != queryGeneration || !ReferenceEquals(journal, sourceJournal)) return;
+                    refreshing = true;
+                }
+                else result = JournalQuery.Execute(snapshot, requestFilter, cancellation.Token);
                 var previousEntries = entries;
-                entries = JournalQuery.Sort(matches, sortColumn, descending).ToArray();
+                entries = result.Entries;
                 foreach (DataGridViewColumn column in history.Columns)
                     column.HeaderCell.SortGlyphDirection = column.Name != sortColumn ? SortOrder.None
                         : descending ? SortOrder.Descending : SortOrder.Ascending;
                 if (history.RowCount != entries.Length) history.RowCount = entries.Length;
-                for (var index = 0; index < entries.Length; index++)
-                    if (index >= previousEntries.Length || previousEntries[index] != entries[index])
-                        history.InvalidateRow(index);
+                if (!entries.SequenceEqual(previousEntries)) history.Invalidate();
                 history.Visible = entries.Length > 0;
-                if (entries.Length > 0)
+                if (entries.Length > 0 && selectionAtStart == selectionGeneration)
                 {
                     var index = Array.FindIndex(entries, entry => entry.Id == currentId);
                     history.CurrentCell = history.Rows[Math.Max(0, index)].Cells["destination"];
@@ -275,14 +325,12 @@ internal sealed partial class MainForm
                     if (history.Visible && firstVisible >= 0) history.FirstDisplayedScrollingRowIndex = Math.Min(firstVisible, entries.Length - 1);
                 }
                 resultCount.Text = L($"{entries.Length:N0} viajes", $"{entries.Length:N0} trips");
-                var completed = entries.Where(entry => entry.Result == "delivered").ToArray();
-                var topRoute = completed.GroupBy(entry => $"{entry.Origin} → {entry.Destination}")
-                    .OrderByDescending(group => group.Count()).FirstOrDefault()?.Key;
+                var topRoute = result.TopRoute;
                 stats.Text = entries.Length == 0
                     ? journal.Entries.Count == 0 ? L("Diario vacío · Aquí aparecerán tus entregas terminadas.", "Journal empty · Completed deliveries will appear here.")
                         : L("Sin resultados para estos filtros.", "No results for these filters.")
-                    : $"{completed.Length} {L("entregadas", "delivered")}  ·  {entries.Count(entry => entry.Result == "cancelled")} {L("canceladas", "cancelled")}  ·  "
-                        + $"{AppOptions.Distance(entries.Sum(entry => entry.Km), preferences.Features.Miles, "N1")}  ·  {FormatDriving(entries.Sum(entry => entry.DrivingSeconds))} {L("al volante", "driving")}"
+                    : $"{result.Delivered} {L("entregadas", "delivered")}  ·  {result.Cancelled} {L("canceladas", "cancelled")}  ·  "
+                        + $"{AppOptions.Distance(result.Km, preferences.Features.Miles, "N1")}  ·  {FormatDriving(result.Seconds)} {L("al volante", "driving")}"
                         + (topRoute is null ? "" : $"\n{L("Ruta más frecuente", "Most frequent route")} · {topRoute}");
                 var showEmpty = entries.Length == 0;
                 if (emptyState.Visible != showEmpty)
@@ -295,7 +343,12 @@ internal sealed partial class MainForm
                 emptyState.Invalidate();
                 export.Enabled = entries.Length > 0;
             }
-            finally { refreshing = false; }
+            catch (OperationCanceledException) { return; }
+            finally
+            {
+                refreshing = false;
+                if (generation == queryGeneration) { pendingQuery = null; filterLoad = null; }
+            }
             observedJournal = journal;
             observedEntries = journal.Entries.ToArray();
             lastQuery = query;
@@ -303,10 +356,59 @@ internal sealed partial class MainForm
         }
         TripEntry[] Selection() => history.SelectedRows.Cast<DataGridViewRow>().OrderBy(row => row.Index)
             .Select(row => EntryAt(row.Index)).OfType<TripEntry>().ToArray();
+        var detailPane = new BufferedSurface { Dock = DockStyle.Right, Width = 280, AutoScroll = true, Visible = false, Padding = new Padding(16) };
+        var detailContent = Grid(1);
+        var detailTitle = TextLabel("", 12, true);
+        var detailBody = TextLabel("", 10);
+        var detailOpen = MakeButton(L("Abrir resumen completo", "Open full summary"));
+        var detailToggle = MakeButton(L("Ver detalles", "Show details"));
+        detailToggle.Tag = "quiet";
+        tools.Controls.Add(detailToggle);
+        AddRows(detailContent, detailTitle, detailBody, detailOpen);
+        detailPane.Controls.Add(detailContent);
+        bool showingDetails = false;
+        void RenderDetail()
+        {
+            var selection = Selection();
+            detailPane.Visible = showingDetails && selection.Length == 1;
+            detailToggle.Enabled = selection.Length == 1;
+            detailToggle.Text = showingDetails ? L("Ocultar detalles", "Hide details") : L("Ver detalles", "Show details");
+            if (selection is not [var entry]) return;
+            detailTitle.Text = $"{entry.Origin} → {entry.Destination}";
+            detailBody.Text = $"{ResultIcon(entry)}\n{entry.Finished?.LocalDateTime:g}\n\n{JourneyLabel(entry)}\n"
+                + $"{AppOptions.Distance(entry.Km, preferences.Features.Miles, "N1")} · {FormatDriving(entry.DrivingSeconds)}\n\n{entry.Notes}";
+            var narrow = window.ClientSize.Width < 840 * DeviceDpi / 96;
+            detailPane.Dock = narrow ? DockStyle.Bottom : DockStyle.Right;
+            if (narrow) detailPane.Height = Math.Min(220 * DeviceDpi / 96, Math.Max(120, window.ClientSize.Height / 3));
+            else detailPane.Width = Math.Min(window.ClientSize.Width / 3, 340 * DeviceDpi / 96);
+            detailOpen.MaximumSize = new Size(Math.Max(80, detailPane.ClientSize.Width - 40), 0);
+            detailOpen.AutoEllipsis = true;
+            detailContent.MaximumSize = new Size(Math.Max(80, detailPane.ClientSize.Width - detailPane.Padding.Horizontal), 0);
+            SetWrap(detailTitle, detailPane.ClientSize.Width - 48);
+            SetWrap(detailBody, detailPane.ClientSize.Width - 48);
+        }
+        detailToggle.Click += (_, _) => { showingDetails = !showingDetails; RenderDetail(); };
+        detailOpen.Click += (_, _) => { if (Selection() is [var entry]) ShowSummary(entry, window); };
+        void FitJournalHeader()
+        {
+            var available = Math.Max(120, window.ClientSize.Width - (detailPane.Visible && detailPane.Dock == DockStyle.Right ? detailPane.Width : 0));
+            header.MaximumSize = new Size(available, 0);
+            foreach (Control control in header.Controls)
+            {
+                control.MaximumSize = new Size(Math.Max(80, available - header.Padding.Horizontal), 0);
+                if (control is FlowLayoutPanel flow) flow.Width = Math.Max(80, available - header.Padding.Horizontal);
+                if (control is Label label) SetWrap(label, available - header.Padding.Horizontal);
+            }
+        }
+        window.ClientSizeChanged += (_, _) => { if (showingDetails) RenderDetail(); FitJournalHeader(); };
+        detailPane.VisibleChanged += (_, _) => FitJournalHeader();
+        detailPane.SizeChanged += (_, _) => FitJournalHeader();
         void UpdateActions()
         {
             if (refreshing) return;
             var count = Selection().Length;
+            RenderDetail();
+            compare.Visible = count == 2;
             compare.Text = L($"Comparar ({count}/2)", $"Compare ({count}/2)");
             var actionStyle = count == 2 ? "primary" : null;
             if (!Equals(compare.Tag, actionStyle)) { compare.Tag = actionStyle; StyleButton(compare); }
@@ -316,7 +418,7 @@ internal sealed partial class MainForm
             compare.Enabled = count == 2;
             if (newlyAvailable) AnimateButton(compare);
         }
-        history.SelectionChanged += (_, _) => UpdateActions();
+        history.SelectionChanged += (_, _) => { if (!refreshing) selectionGeneration++; UpdateActions(); };
         history.GotFocus += (_, _) => history.Invalidate();
         history.LostFocus += (_, _) => history.Invalidate();
         history.ColumnHeaderMouseClick += (_, e) =>
@@ -425,12 +527,20 @@ internal sealed partial class MainForm
         window.Controls.Add(history);
         window.Controls.Add(emptyState);
         window.Controls.Add(header);
+        window.Controls.Add(detailPane);
         StyleTool(window);
-        window.Leaving = () =>
+        FitJournalHeader();
+        void SaveView()
         {
-            lastJournalTrip = EntryAt(history.CurrentRow?.Index ?? -1)?.Id;
+            lastJournalTrip = EntryAt(history.CurrentRow?.Index ?? -1)?.Id ?? lastJournalTrip;
             lastJournalScroll = Math.Max(0, history.FirstDisplayedScrollingRowIndex);
-        };
+            viewState.Set(stateKey, new JournalViewState(cityFilter.Text[..Math.Min(256, cityFilter.Text.Length)], favorites.Checked,
+                from.Checked ? from.Value.Date : null, to.Checked ? to.Value.Date : null, resultFilter.SelectedIndex,
+                truckFilter.SelectedIndex > 0 ? truckFilter.Text : null, distanceFilter.SelectedIndex,
+                tagFilter.SelectedIndex > 0 ? tagFilter.Text : null, sortColumn, descending, lastJournalTrip, lastJournalScroll, filters.Visible));
+            _ = viewState.SaveAsync();
+        }
+        window.Leaving = SaveView;
         window.Disposed += (_, _) =>
         {
             searchDelay.Dispose();
@@ -439,10 +549,24 @@ internal sealed partial class MainForm
             freeIcon.Dispose();
             deliveryIcon.Dispose();
         };
+        AddEmptyActions(emptyState,
+            (L("Quitar filtros", "Clear filters"), () =>
+            {
+                cityFilter.Clear(); favorites.Checked = false; from.Checked = to.Checked = false;
+                foreach (var filter in new[] { resultFilter, truckFilter, distanceFilter, tagFilter }) filter.SelectedIndex = 0;
+                RefreshHistory();
+                cityFilter.Focus();
+            }),
+            (L("Abrir ETS2", "Launch ETS2"), () => OpenExternal("steam://rungameid/227300")));
         window.Activated = RefreshHistory;
-        window.Deactivated = () => searchDelay.Stop();
+        window.Deactivated = () =>
+        {
+            searchDelay.Stop();
+            filterLoad?.Cancel();
+            SaveView();
+        };
         PushLibraryPage(window);
-        if (IsHandleCreated) BeginInvoke(() => { if (!window.IsDisposed) RefreshHistory(); });
+        if (IsHandleCreated) BeginInvoke(() => { if (!window.IsDisposed && window.Visible) RefreshHistory(); });
         else RefreshHistory();
     }
 

@@ -10,6 +10,7 @@ internal sealed partial class MainForm
         private Panel? selected;
         private readonly HashSet<Panel> prepared = [];
         internal Action<Control>? PreparePage;
+        internal Func<string, IDisposable>? Measure;
         public List<Panel> Pages { get; } = [];
         public int ContentWidth => host.ClientSize.Width;
         public event EventHandler? SelectedIndexChanged;
@@ -43,9 +44,11 @@ internal sealed partial class MainForm
             set
             {
                 if (value is null || value == selected) return;
+                using var measurement = Measure?.Invoke("settings-" + Pages.IndexOf(value));
                 using var redraw = new UiRedrawScope(host);
                 using var layout = new UiLayoutBatch(value);
                 host.SuspendLayout();
+                host.BackColor = value.BackColor;
                 var previous = selected;
                 selected = value;
                 if (prepared.Add(value))

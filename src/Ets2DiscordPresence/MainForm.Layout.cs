@@ -37,7 +37,7 @@ internal sealed partial class MainForm
     private readonly Button toggle = MakeButton("Pausar publicación");
     private readonly Button locate = MakeButton("Buscar ETS2");
     private readonly Button launch = MakeButton("▶  Abrir ETS2");
-    private readonly Panel scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
+    private readonly Panel scroll = new BufferedSurface() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly TableLayoutPanel body = Grid(2);
     private readonly TableLayoutPanel side = Grid(1);
     private readonly TableLayoutPanel tripPanel = Grid(1);
@@ -57,8 +57,8 @@ internal sealed partial class MainForm
     {
         var header = Grid(1);
         header.Padding = new Padding(24, 16, 24, 8);
-        var headerTitle = UiLabel("Viaje", "Trip", 23, true);
-        AddRows(header, headerTitle);
+        var headerTitle = UiLabel("Viaje", "Trip", 20, true);
+        AddRows(header, headerTitle, tripFreshness);
         var tripPage = new Panel { Dock = DockStyle.Fill };
         tripPage.Controls.Add(scroll);
         tripPage.Controls.Add(header);
@@ -73,6 +73,10 @@ internal sealed partial class MainForm
         travel.Padding = new Padding(16, 12, 16, 12);
         travel.Margin = new Padding(0, 0, 0, 12);
         travelMode.ForeColor = Accent;
+        FullTextHint(origin);
+        FullTextHint(destination);
+        FullTextHint(cityLabel);
+        FullTextHint(cargo);
         ObserveText(destination, () => shellPalette.Accent);
         ObserveText(arrivalNotice, () => shellPalette.Warning);
         ObserveText(cityLabel, () => shellPalette.Accent);
@@ -101,7 +105,7 @@ internal sealed partial class MainForm
         route.Controls.Add(endMetric, 2, 0);
         AddRows(travel, route, cityLabel);
 
-        metrics.Margin = new Padding(0, 13, 0, 0);
+        metrics.Margin = new Padding(0, 12, 0, 0);
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         var distanceValue = Grid(2);
@@ -129,7 +133,7 @@ internal sealed partial class MainForm
         AddRows(travel, progressArea, metrics, cargo, tripStatus, tripTimes, deadlineAlert, timeline);
         var truckCard = Grid(1);
         truckCard.BackColor = Background;
-        truckCard.Padding = new Padding(9, 5, 9, 6);
+        truckCard.Padding = new Padding(8);
         truckCard.Margin = new Padding(0, 8, 0, 0);
         fuelStatus.ForeColor = shellPalette.Warning;
         var vehicleTitle = ToolBar();
@@ -148,7 +152,7 @@ internal sealed partial class MainForm
         AddRows(travel, truckCard, driveSummary);
 
         preview.BackColor = Surface;
-        preview.Padding = new Padding(16, 10, 16, 9);
+        preview.Padding = new Padding(16, 8, 16, 8);
         preview.Margin = new Padding(0, 0, 0, 12);
         var previewTitle = UiLabel("Vista previa en Discord", "Discord preview", 9, true);
         previewTitle.ForeColor = Accent;
@@ -157,13 +161,13 @@ internal sealed partial class MainForm
 
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         connections.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        connections.Margin = new Padding(0, 0, 0, 7);
+        connections.Margin = new Padding(0, 0, 0, 8);
         gameStatus.BackColor = Surface;
         discordStatus.BackColor = Surface;
-        gameStatus.Padding = new Padding(9, 4, 9, 4);
+        gameStatus.Padding = new Padding(8, 4, 8, 4);
         discordStatus.Padding = gameStatus.Padding;
-        gameStatus.Margin = new Padding(0, 0, 5, 0);
-        discordStatus.Margin = new Padding(5, 0, 0, 0);
+        gameStatus.Margin = new Padding(0, 0, 4, 0);
+        discordStatus.Margin = new Padding(4, 0, 0, 0);
         connections.Controls.Add(gameStatus, 0, 0);
         connections.Controls.Add(discordStatus, 1, 0);
 
@@ -242,9 +246,9 @@ internal sealed partial class MainForm
         body.Controls.Add(tripPanel, 0, 0);
 
         artwork.Dock = DockStyle.Top;
-        artwork.Margin = new Padding(0, 10, 0, 0);
+        artwork.Margin = new Padding(0, 8, 0, 0);
         artwork.MinimumSize = new Size(0, 145);
-        side.Margin = new Padding(14, 0, 0, 0);
+        side.Margin = new Padding(16, 0, 0, 0);
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         side.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -311,7 +315,7 @@ internal sealed partial class MainForm
             body.ColumnStyles[0].Width = narrow || !hasSide ? 100 : 67;
             body.ColumnStyles[1].Width = narrow || !hasSide ? 0 : 33;
             body.SetCellPosition(side, narrow || !hasSide ? new TableLayoutPanelCellPosition(0, 1) : new(1, 0));
-            side.Margin = narrow ? new Padding(0, 4, 0, 0) : new Padding(14, 0, 0, 0);
+            side.Margin = narrow ? new Padding(0, 4, 0, 0) : new Padding(16, 0, 0, 0);
             artwork.Height = (int)((narrow ? 150 : 285) * scale);
             side.Visible = hasSide;
             if (mapAtSide)
